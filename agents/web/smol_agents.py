@@ -155,4 +155,4 @@ Examples:
     )
     if args.trace_path is not None:
         agent.enable_trace(args.trace_path)
-    agent.run(prompt)
+    agent.run(args.prompt)
