@@ -117,20 +117,20 @@ if __name__ == "__main__":
     example_text = """
 Examples:
 
-  Run with an MLX model:
-    python smol_agents.py --agent_name BasicMlx
-                          --model_id mlx-community/Qwen2.5-Coder-32B-Instruct-4bit \\
-                          --model_type mlx \\
-                          --trace_path ./mlx_trace.json \\
-                          --prompt "If the US keeps its 2024 growth rate, how many years will it take for the GDP to double?"
+Run with an MLX model:
+python smol_agents.py --agent_name BasicMlx
+                      --model_id mlx-community/Qwen2.5-Coder-32B-Instruct-4bit \\
+                      --model_type mlx \\
+                      --trace_path ./mlx_trace.json \\
+                      --prompt "If the US keeps its 2024 growth rate, how many years will it take for the GDP to double?"
 
-  Run with a LiteLLM model:
-    python smol_agents.py --agent_name BasicClaude4Sonnet
-                          --model_id anthropic/claude-sonnet-4-20250514 \\
-                          --model_type litellm \\
-                          --trace_path ./litellm_trace.json \\
-                          --prompt "Summarize the US Constitution." \\
-                          --api_key_env ENV_FIELD_FOR_YOUR_API_KEY
+Run with a LiteLLM model:
+python smol_agents.py --agent_name BasicClaude4Sonnet
+                      --model_id anthropic/claude-sonnet-4-20250514 \\
+                      --model_type litellm \\
+                      --trace_path ./litellm_trace.json \\
+                      --prompt "Summarize the US Constitution." \\
+                      --api_key_env ENV_FIELD_FOR_YOUR_API_KEY
 """
 
     parser = argparse.ArgumentParser(
@@ -151,7 +151,7 @@ Examples:
         name=args.agent_name,
         model_id=args.model_id,
         model_type=args.model_type,
-        api_key=os.getenv(args.api_key_env)
+        api_key=os.getenv(args.api_key_env) if args.api_key_env is not None else None,
     )
     if args.trace_path is not None:
         agent.enable_trace(args.trace_path)
