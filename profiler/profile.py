@@ -22,8 +22,6 @@ class Profiler:
         self.glances_output_file = None
         self.target_process = None
         self.process_filter = process_filter
-        self.start_time = None
-        self.end_time = None
         self.target_pids = set()  # Track PIDs created by the target script
         self.monitoring_thread = None
         self.stop_monitoring = False
@@ -84,7 +82,7 @@ class Profiler:
     def run_target_script(self):
         """Run the target Python script and track its process tree"""
         print(f"Starting target script: {self.target_script}")
-        self.start_time = time.time_ns()
+        start_time = time.time_ns()
         
         try:
             # Run the target script
@@ -97,10 +95,10 @@ class Profiler:
             
             # Wait for the script to complete
             stdout, stderr = self.target_process.communicate()
-            self.end_time = time.time_ns()
+            end_time = time.time_ns()
             self.stop_monitoring = True
             
-            print(f"Target script completed in {round((self.end_time - self.start_time) / 1_000_000_000)}s")
+            print(f"Target script completed in {round((end_time - start_time) / 1_000_000_000)}s")
             print(f"Tracked {len(self.target_pids)} process IDs: {sorted(list(self.target_pids))}")
             
             if self.target_process.returncode != 0:
@@ -113,7 +111,6 @@ class Profiler:
             
         except Exception as e:
             print(f"Error running target script: {e}")
-            self.end_time = time.time_ns()
             self.stop_monitoring = True
             return False
     
@@ -138,7 +135,6 @@ class Profiler:
                 logs.append(json.loads(line.strip()))
         
         # Filter
-        logs = [l for l in logs if self.start_time <= l["timestamp"] <= self.end_time]
         for l in logs:
             l["processlist"] = [p for p in l["processlist"] if p["pid"] in self.target_pids]
         logs = [l for l in logs if len(l["processlist"]) > 0]
@@ -171,7 +167,7 @@ class Profiler:
 
 def main():
     # Configuration
-    target_script = "../../agents/web/smol_agents.py"
+    target_script = "../agents/web/smol_agents.py"
     args = [
         "--agent_name", "BasicMlx",
         "--model_id", "mlx-community/Qwen2.5-Coder-32B-Instruct-4bit",
