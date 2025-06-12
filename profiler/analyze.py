@@ -7,6 +7,7 @@ import argparse
 import os
 import json
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import pandas as pd
 from collections import deque
 from pathlib import Path
@@ -41,7 +42,7 @@ class Analyzer:
             "memswap_used": l["memswap"]["used"],
             "diskio_read_bytes": sum(d["read_bytes"] for d in l["diskio"]),
             "diskio_write_bytes": sum(d["write_bytes"] for d in l["diskio"]),
-            "diskio_read_bytes_per_sec": sum(d["read_bytes_rate_per_sec"] for d in l["diskio"]),
+            "diskio_read_bytes_per_sec": sum(d.get("read_bytes_rate_per_sec", 0) for d in l["diskio"]),
             "diskio_write_bytes_per_sec": sum(d.get("write_bytes_rate_per_sec", 0) for d in l["diskio"]),
         } for l in self.glances_log]
         df = pd.DataFrame.from_dict(data)
@@ -88,27 +89,64 @@ class Analyzer:
                 id_to_level[t["span_id"]],
                 (t["start_time"] - start_time) / SEC_TO_NANOSEC,
                 (t["end_time"] - start_time) / SEC_TO_NANOSEC
-            ) for t in self.agent_trace
+            ) for t in self.agent_trace if (t["end_time"] - t["start_time"]) / SEC_TO_NANOSEC >= 0.1
         ]
 
     def plot_trace_execution_timeline(self, ax):
-        max_level = max(level for _, level, _, _ in self.processed_agent_trace)
+        # Color
+        stage_names = list({t[0] for t in self.processed_agent_trace})
+        cmap = plt.get_cmap('RdYlGn', len(stage_names))
+
+        stage_names_ordered = [
+            (
+                name,
+                min(level for (stage, level, _, _) in self.processed_agent_trace if stage == name),
+                min(start for (stage, _, start, _) in self.processed_agent_trace if stage == name)
+            ) for name in stage_names
+        ]
+        stage_names_ordered = sorted(stage_names_ordered, key=lambda e: (e[1], e[2]))
+        stage_to_color = {stage: cmap(i) for i, stage in enumerate([name for (name, _, _) in stage_names_ordered])}
+
+        # Spacing and level positions
+        max_level = max(t[1] for t in self.processed_agent_trace)
         spacing = 0.3
         bar_height = 0.2
         level_positions = [i * spacing for i in range(max_level + 1)]
+
+        # Config axis
         ax.set_ylim(-spacing, level_positions[-1] + spacing)
         ax.set_yticks(level_positions)
-        ax.set_yticklabels([f"Level {i}" for i in range(max_level + 1)])
-        ax.grid(True, axis='x', linestyle='--', alpha=0.5)
+        ax.set_yticklabels([f"{i}" for i in range(max_level + 1)])
+        ax.set_ylabel("Call Stack Level")
 
+        # Plot stages
         for stage, level, t_start, t_end in self.processed_agent_trace:
+            duration = max(t_end - t_start, 0.2)
             y_pos = level_positions[level]
-            ax.barh(y_pos, max(t_end - t_start, 0.2), left=t_start, height=bar_height, alpha=0.6)
-            ax.text((t_start + t_end) / 2, y_pos, stage, ha='center', va='center', fontsize=8)
+            color = stage_to_color[stage]
+            
+            # Draw the bar
+            ax.barh(y_pos, duration, left=t_start, height=bar_height, color=color, edgecolor=None)
+
+            # Draw border on the left and right edge
+            ax.barh(y_pos, 0.1, left=t_start, height=bar_height, color="black")
+            ax.barh(y_pos, 0.1, left=t_start + duration - 0.1, height=bar_height, color="black")
+
+            # Draw the text if the bar is long enough
+            bar_pixel_width = ax.transData.transform((t_end, 0))[0] - ax.transData.transform((t_start, 0))[0]
+            text_obj = ax.text(0, 0, stage, fontsize=8)
+            text_pixel_width = text_obj.get_window_extent(renderer=ax.figure.canvas.get_renderer()).width
+            text_obj.remove()
+            if text_pixel_width <= bar_pixel_width * 1.25:
+                ax.text((t_start + t_end) / 2, y_pos, stage, ha='center', va='center', fontsize=8)
+
+        # Legend
+        legend_handles = [mpatches.Patch(color=color, label=stage) for stage, color in stage_to_color.items()]
+        ax.legend(handles=legend_handles, loc='upper center', bbox_to_anchor=(0.5, -0.4), ncol=7, fontsize=8, frameon=False)
 
     def plot_metrics(self, save_name, title, y_axis_label, metrics, second_y_axis_label=None, second_metrics=None):
         fig, (ax, ax_stage) = plt.subplots(
-            2, 1, figsize=(12, 6), sharex=True, gridspec_kw={'height_ratios': [3, 1]}
+            2, 1, figsize=(12, 8), sharex=True, gridspec_kw={'height_ratios': [3, 1]}
         )
 
         # Plot left y-axis
@@ -125,6 +163,7 @@ class Analyzer:
         ax.set_ylabel(y_axis_label)
         ax.tick_params(axis="y")
         ax.set_title(title)
+        ax.grid(alpha=0.3)
         if len(metrics) > 1:
             ax.legend()
 
@@ -211,8 +250,8 @@ class Analyzer:
     
 
 if __name__ == "__main__":
-    glances_log_path = "./logs/basicmlx_log.jsonl"
-    agent_trace_path = "./mlx_trace.json" # Currently only smolagent's trace is accepted
+    glances_log_path = "./logs/basicmlx_glances.jsonl"
+    agent_trace_path = "./logs/basicmlx_trace.json" # Currently only smolagent's trace is accepted
     output_dir = "./analysis_logs"
 
     analyzer = Analyzer(glances_log_path, agent_trace_path, output_dir)
