@@ -3,7 +3,16 @@ import json
 import os
 
 from dotenv import load_dotenv
+from openinference.instrumentation import get_attributes_from_context
+from openinference.instrumentation.helpers import safe_json_dumps
 from openinference.instrumentation.smolagents import SmolagentsInstrumentor
+from openinference.instrumentation.smolagents._wrappers import (
+    OPENINFERENCE_SPAN_KIND,
+    CHAIN,
+    INPUT_VALUE,
+    OUTPUT_VALUE,
+    _get_input_value,
+)
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -11,28 +20,108 @@ from opentelemetry.sdk.resources import Resource
 from smolagents import (
     CodeAgent,
     MLXModel,
+    MultiStepAgent,
     ToolCallingAgent,
     VisitWebpageTool,
-    WebSearchTool
+    WebSearchTool,
 )
+from smolagents.memory import PlanningStep
+from typing import Any, Callable, Mapping, Tuple
+from wrapt import wrap_function_wrapper
 
-### OpenTelemetry code for exporting trace to JSON
+
+class _GeneratorStepWrapper:
+    def __init__(self, tracer, is_planning_step=False):
+        self._tracer = tracer
+        self._is_planning_step = is_planning_step
+
+    def __call__(
+        self,
+        wrapped: Callable[..., Any],
+        instance: Any,
+        args: Tuple[Any, ...],
+        kwargs: Mapping[str, Any],
+    ) -> Any:
+        span_name = (
+            PlanningStep.__name__
+            if self._is_planning_step
+            else args[0].__class__.__name__
+        )
+        with self._tracer.start_as_current_span(
+            span_name,
+            attributes={
+                OPENINFERENCE_SPAN_KIND: CHAIN,
+                INPUT_VALUE: _get_input_value(wrapped, *args, **kwargs),
+                **dict(get_attributes_from_context()),
+            },
+        ) as span:
+            last_item = None
+            for item in wrapped(*args, **kwargs):
+                yield item
+                last_item = item
+            if self._is_planning_step:
+                assert isinstance(last_item, PlanningStep)
+                span.set_attribute(OUTPUT_VALUE, safe_json_dumps(last_item.dict()))
+            else:
+                step_log = args[0]  # ActionStep
+                span.set_attribute(OUTPUT_VALUE, safe_json_dumps(step_log.dict()))
+                if step_log.error is not None:
+                    span.record_exception(step_log.error)
+            span.set_status(trace.StatusCode.OK)
+
+
+class CustomSmolagentsInstrumentor(SmolagentsInstrumentor):
+    """Add step-by-step tracing for smolagents"""
+
+    def _instrument(self, **kwargs):
+        super()._instrument(**kwargs)
+
+        self._original_execute_step = getattr(MultiStepAgent, "_execute_step", None)
+        wrap_function_wrapper(
+            module="smolagents",
+            name=f"{MultiStepAgent.__name__}._execute_step",
+            wrapper=_GeneratorStepWrapper(tracer=self._tracer),
+        )
+
+        self._original_generate_planning_step = getattr(
+            MultiStepAgent, "_generate_planning_step", None
+        )
+        wrap_function_wrapper(
+            module="smolagents",
+            name=f"{MultiStepAgent.__name__}._generate_planning_step",
+            wrapper=_GeneratorStepWrapper(tracer=self._tracer, is_planning_step=True),
+        )
+
+    def _uninstrument(self, **kwargs):
+        super()._uninstrument(**kwargs)
+        if self._original_execute_step is not None:
+            setattr(MultiStepAgent, "_execute_step", self._original_execute_step)
+            self._original_execute_step = None
+
+        if self._original_generate_planning_step is not None:
+            setattr(
+                MultiStepAgent, "_execute_step", self._original_generate_planning_step
+            )
+            self._original_generate_planning_step = None
+
 
 class JsonSpanExporter:
     """Simple file-based span exporter that writes JSON traces to a file"""
-    
+
     def __init__(self, file_path="traces.json"):
         self.file_path = file_path
         self.spans_data = []
-    
+
     def export(self, spans):
         """Export spans to JSON file"""
         for span in spans:
             span_dict = {
                 "name": span.name,
-                "trace_id": format(span.context.trace_id, '032x'),
-                "span_id": format(span.context.span_id, '016x'),
-                "parent_span_id": format(span.parent.span_id, '016x') if span.parent else None,
+                "trace_id": format(span.context.trace_id, "032x"),
+                "span_id": format(span.context.span_id, "016x"),
+                "parent_span_id": (
+                    format(span.parent.span_id, "016x") if span.parent else None
+                ),
                 "start_time": span.start_time,
                 "end_time": span.end_time,
                 "status": span.status.status_code.name,
@@ -41,42 +130,54 @@ class JsonSpanExporter:
                     {
                         "name": event.name,
                         "timestamp": event.timestamp,
-                        "attributes": dict(event.attributes) if event.attributes else {}
+                        "attributes": (
+                            dict(event.attributes) if event.attributes else {}
+                        ),
                     }
                     for event in span.events
-                ]
+                ],
             }
             self.spans_data.append(span_dict)
-        
+
         # Write all spans to JSON file
-        with open(self.file_path, 'w') as f:
+        with open(self.file_path, "w") as f:
             json.dump(self.spans_data, f, indent=2, default=str)
-        
+
         return True
-    
+
     def shutdown(self):
         """Cleanup method"""
         pass
 
+
 def get_json_exporter(service_name, output_file):
     """Setup OpenTelemetry with file export"""
-    
-    resource = Resource.create({
-        "service.name": service_name,
-    })
+
+    resource = Resource.create(
+        {
+            "service.name": service_name,
+        }
+    )
     tracer_provider = TracerProvider(resource=resource)
     file_exporter = JsonSpanExporter(output_file)
     span_processor = BatchSpanProcessor(file_exporter)
     tracer_provider.add_span_processor(span_processor)
-    
+
     return tracer_provider
 
-### Agent definitions
 
 class SmolAgent:
-    def __init__(self, name, model_id, model_type, max_tokens=20000, api_key=None):
+    def __init__(
+        self,
+        name,
+        model_id,
+        model_type,
+        max_tokens=20000,
+        planning_interval=None,
+        api_key=None,
+    ):
         self.name = name
-        if model_type == "mlx": # For Apple silicon
+        if model_type == "mlx":  # For Apple silicon
             self.model = MLXModel(
                 model_id=model_id,
                 trust_remote_code=True,
@@ -86,7 +187,7 @@ class SmolAgent:
             self.model = LiteLLMModel(model_id=model_id, api_key=api_key)
         else:
             raise NotImplemented(f"{model_type} is not supported.")
-        
+
         self.search_agent = ToolCallingAgent(
             tools=[WebSearchTool(), VisitWebpageTool()],
             model=self.model,
@@ -98,18 +199,22 @@ class SmolAgent:
             tools=[],
             model=self.model,
             managed_agents=[self.search_agent],
+            planning_interval=planning_interval,
         )
 
-        self.instrumentor = SmolagentsInstrumentor()
+        self.instrumentor = CustomSmolagentsInstrumentor()
 
     def enable_trace(self, output_path):
-        self.instrumentor.instrument(tracer_provider=get_json_exporter(self.name, output_path))
+        self.instrumentor.instrument(
+            tracer_provider=get_json_exporter(self.name, output_path)
+        )
 
     def disable_trace(self):
         self.instrumentor.uninstrument()
 
-    def run(self, prompt=None):
+    def run(self, prompt):
         self.agent.run(prompt)
+
 
 if __name__ == "__main__":
     load_dotenv()
@@ -139,11 +244,37 @@ python smol_agents.py --agent_name BasicClaude4Sonnet
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--agent_name", type=str, required=True, help="Agent's name")
-    parser.add_argument("--model_id", type=str, required=True, help="Model ID to use (e.g., HuggingFace, anthropic/<MODEL_NAME>), etc.")
-    parser.add_argument("--model_type", type=str, choices=["mlx", "litellm"], required=True, help="Type of the model backend.")
-    parser.add_argument("--prompt", type=str, required=True, help="Prompt to give to the agent.")
-    parser.add_argument("--trace_path", type=str, default=None, help="Path to the trace output JSON file.")
-    parser.add_argument("--api_key_env", type=str, default=None, help="Optional .env's field for API key for litellm models.")
+    parser.add_argument(
+        "--model_id",
+        type=str,
+        required=True,
+        help="Model ID to use (e.g., HuggingFace, anthropic/<MODEL_NAME>), etc.",
+    )
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        choices=["mlx", "litellm"],
+        required=True,
+        help="Type of the model backend.",
+    )
+    parser.add_argument(
+        "--prompt", type=str, required=True, help="Prompt to give to the agent."
+    )
+    parser.add_argument(
+        "--trace_path",
+        type=str,
+        default=None,
+        help="Path to the trace output JSON file.",
+    )
+    parser.add_argument(
+        "--api_key_env",
+        type=str,
+        default=None,
+        help="Optional .env's field for API key for litellm models.",
+    )
+    parser.add_argument(
+        "--planning_interval", type=int, default=None, help="Planning interval."
+    )
 
     args = parser.parse_args()
 
