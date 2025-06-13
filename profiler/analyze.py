@@ -9,6 +9,7 @@ import json
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import pandas as pd
+import seaborn as sns
 from collections import deque
 from pathlib import Path
 
@@ -95,8 +96,7 @@ class Analyzer:
     def plot_trace_execution_timeline(self, ax):
         # Color
         stage_names = list({t[0] for t in self.processed_agent_trace})
-        cmap = plt.get_cmap('RdYlGn', len(stage_names))
-
+        palette = sns.color_palette("Set2", len(stage_names))
         stage_names_ordered = [
             (
                 name,
@@ -105,7 +105,7 @@ class Analyzer:
             ) for name in stage_names
         ]
         stage_names_ordered = sorted(stage_names_ordered, key=lambda e: (e[1], e[2]))
-        stage_to_color = {stage: cmap(i) for i, stage in enumerate([name for (name, _, _) in stage_names_ordered])}
+        stage_to_color = {stage: palette[i] for i, stage in enumerate([name for (name, _, _) in stage_names_ordered])}
 
         # Spacing and level positions
         max_level = max(t[1] for t in self.processed_agent_trace)
@@ -120,29 +120,34 @@ class Analyzer:
         ax.set_ylabel("Call Stack Level")
 
         # Plot stages
-        for stage, level, t_start, t_end in self.processed_agent_trace:
-            duration = max(t_end - t_start, 0.2)
-            y_pos = level_positions[level]
-            color = stage_to_color[stage]
-            
-            # Draw the bar
-            ax.barh(y_pos, duration, left=t_start, height=bar_height, color=color, edgecolor=None)
+        grouped_agent_trace = [
+            sorted([t for t in self.processed_agent_trace if t[1] == level], key=lambda t: t[2])
+            for level in range(max_level + 1)
+        ]
+        for level_group in grouped_agent_trace:
+            for i, (stage, level, t_start, t_end) in enumerate(level_group):
+                duration = max(t_end - t_start, 0.2)
+                y_pos = level_positions[level]
+                color = stage_to_color[stage]
+                
+                # Draw the bar
+                ax.barh(y_pos, duration, left=t_start, height=bar_height, color=color, edgecolor=None)
 
-            # Draw border on the left and right edge
-            ax.barh(y_pos, 0.1, left=t_start, height=bar_height, color="black")
-            ax.barh(y_pos, 0.1, left=t_start + duration - 0.1, height=bar_height, color="black")
+                # Draw border
+                if i > 0 and (t_start - level_group[i-1][3]) < 0.1:
+                    ax.vlines(t_start, y_pos - bar_height / 2 + 0.001, y_pos + bar_height / 2, color='black', linewidth=0.5)
 
-            # Draw the text if the bar is long enough
-            bar_pixel_width = ax.transData.transform((t_end, 0))[0] - ax.transData.transform((t_start, 0))[0]
-            text_obj = ax.text(0, 0, stage, fontsize=8)
-            text_pixel_width = text_obj.get_window_extent(renderer=ax.figure.canvas.get_renderer()).width
-            text_obj.remove()
-            if text_pixel_width <= bar_pixel_width * 1.25:
-                ax.text((t_start + t_end) / 2, y_pos, stage, ha='center', va='center', fontsize=8)
+                # Draw the text if the bar is long enough
+                bar_pixel_width = ax.transData.transform((t_end, 0))[0] - ax.transData.transform((t_start, 0))[0]
+                text_obj = ax.text(0, 0, stage, fontsize=8)
+                text_pixel_width = text_obj.get_window_extent(renderer=ax.figure.canvas.get_renderer()).width
+                text_obj.remove()
+                if text_pixel_width <= bar_pixel_width * 1.25:
+                    ax.text((t_start + t_end) / 2, y_pos, stage, ha='center', va='center', fontsize=8)
 
         # Legend
         legend_handles = [mpatches.Patch(color=color, label=stage) for stage, color in stage_to_color.items()]
-        ax.legend(handles=legend_handles, loc='upper center', bbox_to_anchor=(0.5, -0.4), ncol=7, fontsize=8, frameon=False)
+        ax.legend(handles=legend_handles, loc='upper center', bbox_to_anchor=(0.5, -0.35), ncol=7, fontsize=8, frameon=False)
 
     def plot_metrics(self, save_name, title, y_axis_label, metrics, second_y_axis_label=None, second_metrics=None):
         fig, (ax, ax_stage) = plt.subplots(
