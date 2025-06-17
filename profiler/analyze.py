@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Analyze glances log and agent's trace
 """
@@ -17,7 +16,7 @@ SEC_TO_NANOSEC = 1_000_000_000
 GB_TO_BYTE = 1024 * 1024 * 1024
 
 class Analyzer:
-    def __init__(self, glances_log_path, agent_trace, output_dir="./analysis_logs"):
+    def __init__(self, glances_log_path, agent_trace_path, output_dir="./analysis_logs"):
         with Path(glances_log_path).open("r", encoding="utf-8") as f:
             glances_log = [json.loads(l) for l in f if l.strip()]
         with Path(agent_trace_path).open("r", encoding="utf-8") as f:
@@ -255,9 +254,24 @@ class Analyzer:
     
 
 if __name__ == "__main__":
-    glances_log_path = "./logs/basicmlx_glances.jsonl"
-    agent_trace_path = "./logs/basicmlx_trace.json" # Currently only smolagent's trace is accepted
-    output_dir = "./analysis_logs"
+    example_text = """
+Examples:
 
-    analyzer = Analyzer(glances_log_path, agent_trace_path, output_dir)
+python analyze.py \\
+--glances_log_path ./logs/smolagent_glances.jsonl \\
+--agent_trace_path ./logs/smolagent_trace.json \\
+--output_dir ./analysis_logs
+"""
+    parser = argparse.ArgumentParser(
+        description="Analyze an execution's trace and along with its system resource usage",
+        epilog=example_text,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--glances_log_path", type=str, required=True, help="Path to the glances log.")
+    parser.add_argument("--agent_trace_path", type=str, required=True, help="Path to the agent's trace.")
+    parser.add_argument("--output_dir", type=str, required=True, help="Path to the directory to write analyses, figures, etc.")
+
+    args = parser.parse_args()
+
+    analyzer = Analyzer(args.glances_log_path, args.agent_trace_path, args.output_dir)
     analyzer.analyze()
