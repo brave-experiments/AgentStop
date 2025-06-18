@@ -155,14 +155,14 @@ if __name__ == "__main__":
 Examples:
 
 Run with an MLX model:
-python smol_agents.py
+python smol_agents.py \\
 --model_id mlx-community/Qwen2.5-Coder-32B-Instruct-4bit \\
 --model_type mlx \\
 --trace_path ./trace.json \\
 --prompt "If the US keeps its 2024 growth rate, how many years will it take for the GDP to double?"
 
 Run with a LiteLLM model:
-python smol_agents.py
+python smol_agents.py \\
 --model_id anthropic/claude-sonnet-4-20250514 \\
 --model_type litellm \\
 --trace_path ./trace.json \\

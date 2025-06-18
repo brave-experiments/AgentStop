@@ -203,7 +203,7 @@ def main():
     example_text = """
 Examples:
 
-python profile.py
+python profile.py \\
 --script ../agents/web/smol_agents.py \\
 --model_id mlx-community/Qwen2.5-Coder-32B-Instruct-4bit \\
 --model_type mlx \\
@@ -214,7 +214,7 @@ python profile.py
 --frequency 0.5 \\
 --capture_stdout
 
-python profile.py
+python profile.py \\
 --script ../agents/web/langchain_agents.py \\
 --model_id qwen2.5-coder:32b \\
 --model_type ollama \\
