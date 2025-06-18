@@ -247,8 +247,9 @@ class Analyzer:
         # Config axis
         ax.set_ylim(-spacing, level_positions[-1] + spacing)
         ax.set_yticks(level_positions)
-        other_label = "Oth"
-        ax.set_yticklabels([other_label, "LLM", "Tool"])
+        other_label = "Other"
+        ax.set_yticklabels([other_label, "LLM", "Tool"], rotation=60, va="center")
+        ax.tick_params(axis="y", pad=0)
         ax.set_ylabel("Execution Type")
         type_to_level = {
             other_label: 0,
@@ -307,8 +308,23 @@ class Analyzer:
                     output_tokens = attributes.get("llm.token_count.completion", None)
                     if input_tokens is not None and output_tokens is not None:
                         text = f"Tkn: {input_tokens} in, {output_tokens} out"
-                        wrapped_text = wrap_text_to_axis_width(ax, text, t_start, t_start + duration, fontsize=fontsize)
-                        ax.text(bar_center, y_pos - bar_height, wrapped_text, ha="center", va="top", fontsize=fontsize)
+                        text = wrap_text_to_axis_width(ax, text, t_start, t_start + duration, fontsize=fontsize)
+                        ax.text(bar_center, y_pos - bar_height, text, ha="center", va="top", fontsize=fontsize)
+                elif kind == "TOOL":
+                    text = None
+                    if "search" in stage.lower():
+                        input_value = attributes.get("input.value", None)
+                        if input_value is not None:
+                            try:
+                                input_value = json.loads(input_value)
+                                text = input_value.get("query", None)
+                                if text is None and "kwargs" in input_value:
+                                    text = input_value["kwargs"].get("query", None)
+                            except:
+                                pass
+                    
+                    if text is not None:
+                        ax.text(bar_center, y_pos + bar_height, text[:50], ha="center", va="top", fontsize=fontsize)
 
         # Legend
         legend_handles = [mpatches.Patch(color=color, label=stage) for stage, color in stage_to_color.items()]
