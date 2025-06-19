@@ -6,6 +6,8 @@ System performance profiling using glances.
 import argparse
 import json
 import os
+import platform
+import plistlib
 import psutil
 import signal
 import subprocess
@@ -22,21 +24,24 @@ class Profiler:
         target_script,
         args,
         process_filter,
-        log_output_path,
-        frequency=1.0,
+        glances_output_path,
+        power_output_path=None,
+        frequency=1000, # ms
         capture_stdout=False,
         include_ollama=False,
     ):
         self.target_script = target_script
         self.args = args
         self.process_filter = process_filter
-        self.log_output_path = log_output_path
+        self.glances_output_path = glances_output_path
+        self.power_output_path = power_output_path
         self.frequency = frequency
         self.capture_stdout = capture_stdout
         self.include_ollama = include_ollama
 
         self.glances_process = None
-        self.glances_output_file = None
+        self.glances_tmp_file = None
+        self.power_tmp_file = None
         self.target_process = None
         self.target_pids = set()  # Track PIDs created by the target script
         self.monitoring_thread = None
@@ -70,38 +75,63 @@ class Profiler:
 
     def start_glances(self):
         """Start glances with json export"""
-        print("Starting glances monitoring...")
-        try:
-            with tempfile.NamedTemporaryFile(delete=False) as tmp:
-                self.glances_output_file = tmp.name
-            plugins = "cpu,gpu,mem,memswap,sensors,network,diskio,processlist"
-            with open(self.glances_output_file, "w") as f:
-                self.glances_process = subprocess.Popen(
-                    [
-                        "glances",
-                        "--stdout-json",
-                        plugins,
-                        "--process-filter",
-                        self.process_filter
-                        + ("|.*(o|O)llama.*" if self.include_ollama else ""),
-                        "--time",
-                        str(self.frequency),
-                    ],
-                    stdout=f,
-                    stderr=subprocess.DEVNULL,
-                )
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            self.glances_tmp_file = tmp.name
+        plugins = "cpu,gpu,mem,memswap,sensors,network,diskio,processlist"
+        with open(self.glances_tmp_file, "w") as f:
+            self.glances_process = subprocess.Popen(
+                [
+                    "glances",
+                    "--stdout-json",
+                    plugins,
+                    "--process-filter",
+                    self.process_filter
+                    + ("|.*(o|O)llama.*" if self.include_ollama else ""),
+                    "--time",
+                    str(self.frequency / 1000),
+                ],
+                stdout=f,
+                stderr=subprocess.DEVNULL,
+            )
 
-                # Give glances a moment to start
-                time.sleep(2)
-                print(
-                    f"Started glances logging to {self.glances_output_file} (PID = {self.glances_process.pid})"
-                )
-                return True
-        except Exception as e:
-            print(f"Error starting glances: {e}")
-            return False
+            # Give glances a moment to start
+            time.sleep(3)
+            print(
+                f"Started glances logging to {self.glances_tmp_file} (PID = {self.glances_process.pid})"
+            )
 
-    def run_target_script(self):
+    def start_power_measurement(self):
+        os_name = platform.system()
+        if os_name == "Darwin":
+            self.start_powermetrics()
+        else:
+            raise NotImplemented("Power measurement is currently only supported on Mac.")
+
+    def start_powermetrics(self):
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            self.power_tmp_file = tmp.name
+
+        self.power_process = subprocess.Popen(
+            [
+                "sudo", "powermetrics",
+                "--format", "plist",
+                "--sample-rate", str(self.frequency),
+                "--samplers", "cpu_power,gpu_power,thermal,tasks",
+                "--order", "pid",
+                "--output-file", self.power_tmp_file,
+                "--show-process-energy",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        # Give program a moment to start
+        time.sleep(3)
+        print(
+            f"Started powermetrics logging to {self.power_tmp_file} (PID = {self.power_process.pid})"
+        )
+
+    def start_target_script(self):
         """Run the target Python script and track its process tree"""
         print(f"Starting target script: {self.target_script}")
         start_time = time.time_ns()
@@ -142,59 +172,99 @@ class Profiler:
             self.stop_monitoring = True
             return False
 
-    def stop_glances(self):
-        """Stop the glances process"""
-        if self.glances_process:
-            print("Stopping glances...")
-            self.glances_process.send_signal(signal.SIGINT)
-            try:
-                self.glances_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.glances_process.kill()
-            time.sleep(2)
-            print("Glances stopped")
+    def stop_process(self, process):
+        process.send_signal(signal.SIGINT)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+        time.sleep(2)
 
-    def save_log(self):
+    def stop_glances(self):
+        print("Stopping glances...")
+        self.stop_process(self.glances_process)
+        print("Glances stopped")
+
+    def stop_power_measurement(self):
+        print("Stopping power measurement...")
+        self.stop_process(self.power_process)
+        print("Power measurement stopped")
+
+    def should_include_process(self, pid, name):
+        return pid in self.target_pids or (self.include_ollama and "ollama" in name.lower())
+
+    def save_jsonl(self, lines, path_name):
+        path = Path(path_name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as f:
+            for item in lines:
+                f.write(json.dumps(item) + "\n")
+        setattr(self, path_name, None)
+
+    def save_glances_log(self):
         """Filter the glances log for processes created by the target script and time period"""
         # Read
         logs = []
-        with open(self.glances_output_file, "r", encoding="utf-8") as f:
+        with open(self.glances_tmp_file, "r", encoding="utf-8") as f:
             for line in f:
                 logs.append(json.loads(line.strip()))
 
         # Filter
         for l in logs:
             l["processlist"] = [
-                p
-                for p in l["processlist"]
-                if (p["pid"] in self.target_pids)
-                or (self.include_ollama and "ollama" in p["cmdline"][0].lower())
+                p for p in l["processlist"]
+                if self.should_include_process(p["pid"], p["cmdline"][0].lower())
             ]
         logs = [l for l in logs if len(l["processlist"]) > 0]
 
         # Save
-        log_output_path = Path(self.log_output_path)
-        log_output_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_output_path.open("w", encoding="utf-8") as f:
-            for item in logs:
-                f.write(json.dumps(item) + "\n")
-        print(f"Log saved to {log_output_path.resolve()}")
+        self.save_jsonl(logs, self.glances_output_path)
+        os.remove(self.glances_tmp_file)
+        print(f"Glances log saved")
 
-        # Clean up
-        os.remove(self.glances_output_file)
-        self.glances_output_file = None
+    def save_power_measurement(self):
+        os_name = platform.system()
+        if os_name == "Darwin":
+            self.save_powermetrics()
+        else:
+            raise NotImplemented("Power measurement is currently only supported on Mac.")
+
+    def save_powermetrics(self):
+        with open(self.power_tmp_file, "rb") as f:
+            data = f.read()
+        logs = [plistlib.loads(d) for d in data.split(b'\x00')]
+        for log in logs:
+            log["tasks"] = [
+                t for t in log.get("tasks", [])
+                if self.should_include_process(t["pid"], t["name"])
+            ]
+            # Convert datetime object to Unix (ns) for JSON
+            log["timestamp"] = log["timestamp"].timestamp() * 1_000_000_000
+        logs = [l for l in logs if len(l["tasks"]) > 0]
+        self.save_jsonl(logs, self.power_output_path)
+        # os.remove(self.power_tmp_file)
+        print(f"Powermetrics log saved")
 
     def start_profiling(self):
         """Main method to run the complete monitoring process"""
         try:
-            if not self.start_glances():
-                return False
-            self.run_target_script()
+            # Start
+            self.start_glances()
+            if self.power_output_path is not None:
+                self.start_power_measurement()
+            self.start_target_script()
+
+            # Stop
+            if self.power_output_path is not None:
+                self.stop_power_measurement()
+                self.save_power_measurement()
             self.stop_glances()
-            self.save_log()
+            self.save_glances_log()
             return True
         except Exception as e:
             print(f"Error during monitoring: {e}")
+            if self.power_output_path is not None:
+                self.stop_power_measurement()
             self.stop_glances()
             return False
 
@@ -211,7 +281,8 @@ python profile.py \\
 --trace_path ./logs/smolagent_trace.json \\
 --glances_process_filter ".*python.*" \\
 --glances_output_path logs/smolagent_glances.jsonl \\
---frequency 0.5 \\
+--power_output_path logs/smolagent_power.jsonl \\
+--frequency 500 \\
 --capture_stdout
 
 python profile.py \\
@@ -222,7 +293,8 @@ python profile.py \\
 --trace_path ./logs/langchain_trace.json \\
 --glances_process_filter ".*python.*" \\
 --glances_output_path logs/langchain_glances.jsonl \\
---frequency 0.5 \\
+--power_output_path logs/langchain_power.jsonl \\
+--frequency 500 \\
 --capture_stdout \\
 --include_ollama
 """
@@ -239,13 +311,17 @@ python profile.py \\
     parser.add_argument("--trace_path", type=str, default=None, help="Path to save the JSON trace.")
     parser.add_argument("--api_key_env", type=str, default=None, help="Optional .env's field for the model API key.")
     parser.add_argument("--glances_process_filter", type=str, default=None, help="Regex for filtering glances process.")
-    parser.add_argument("--glances_output_path", type=str, default=None, help="Path to save the glances log.")
-    parser.add_argument("--frequency", type=float, default=1.0, help="Samples resource metrics every n seconds")
+    parser.add_argument("--glances_output_path", type=str, default=None, help="Path to save the glances log in JSONL.")
+    parser.add_argument("--power_output_path", type=str, default=None, help="Path to save the processed power profile log in JSONL format.")
+    parser.add_argument("--frequency", type=float, default=1000, help="Samples resource metrics every <frequency> milliseconds")
     parser.add_argument("--capture_stdout", action=argparse.BooleanOptionalAction, help="Whether to print the output of the agent to stdout.")
     parser.add_argument("--include_ollama", action=argparse.BooleanOptionalAction, help="Whether to include Ollama in the profiling.")
 
     args = parser.parse_args()
 
+    if args.power_output_path is not None and platform.system() == "Darwin" and os.geteuid() != 0:
+        raise Exception("Must run with sudo to enable power measurement on Mac")
+    
     # Create and run the profiler
     script_args = [
         ("--model_id", args.model_id),
@@ -261,6 +337,7 @@ python profile.py \\
         script_args,
         args.glances_process_filter,
         args.glances_output_path,
+        power_output_path=args.power_output_path,
         frequency=args.frequency,
         capture_stdout=args.capture_stdout,
         include_ollama=args.include_ollama,
