@@ -7,59 +7,22 @@ import os
 import json
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import ollama
 import pandas as pd
 import seaborn as sns
+from tqdm import tqdm
 from collections import deque
 from pathlib import Path
 
 SEC_TO_NANOSEC = 1_000_000_000
 GB_TO_BYTE = 1024 * 1024 * 1024
 
-def wrap_text_to_axis_width(ax, text, x_start, x_end, fontsize=None):
-    """
-    Wrap text so that it fits within the horizontal space between x_start and x_end in an axes.
-    
-    Parameters:
-    - ax: matplotlib Axes
-    - text: str, the original unwrapped text
-    - x_start: float, starting x-value (data units)
-    - x_end: float, ending x-value (data units)
-    - fontsize: optional dict, font settings (same as used in ax.text)
-    
-    Returns:
-    - wrapped_text: str, text with line breaks inserted to fit within the pixel width
-    """
-
-    renderer = ax.figure.canvas.get_renderer()
-    max_width_px = ax.transData.transform((x_end, 0))[0] - ax.transData.transform((x_start, 0))[0]
-
-    # Estimate the width of each word and wrap accordingly
-    words = text.split()
-    lines = []
-    current_line = ""
-
-    for word in words:
-        test_line = current_line + (" " if current_line else "") + word
-        text_obj = ax.text(0, 0, test_line, fontsize=fontsize)
-        text_width = text_obj.get_window_extent(renderer=renderer).width
-        text_obj.remove()
-
-        if text_width <= max_width_px:
-            current_line = test_line
-        else:
-            if current_line:
-                lines.append(current_line)
-            current_line = word
-
-    if current_line:
-        lines.append(current_line)
-
-    return "\n".join(lines)
-
 class Analyzer:
     def __init__(
         self, glances_log_path, agent_trace_path,
-        output_dir="./analysis_logs", output_ext="png", full_execution=False,
+        model_id=None, # LLM model for analyzing
+        full_execution=False,
+        output_dir="./analysis_logs", output_ext=["png"],
     ):
         with Path(glances_log_path).open("r", encoding="utf-8") as f:
             glances_log = [json.loads(l) for l in f if l.strip()]
@@ -68,6 +31,10 @@ class Analyzer:
             
         self.glances_log = glances_log
         self.agent_trace = agent_trace
+
+        if model_id is not None: # Make sure model_id is correct
+            ollama.show(model=model_id)
+            self.model_id = model_id
 
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         self.output_dir = output_dir
@@ -106,6 +73,34 @@ class Analyzer:
 
         self.glances_df = df
 
+    def describe_agent_action(self, text):
+        if self.model_id is None:
+            return ""
+        
+        prompt = f"""You are an expert in analyzing computer programs and AI behaviors.
+You will be provided with the output message of some AI assistant.
+Your task is to describe succinctly in only 5-7 words what the AI assistant is doing.
+Do not include specific details, just focus on the general action.
+Use abbreviations as much as possible.
+
+Here are some examples of good descriptions:
+<examples>
+Searching for <SOMETHING>.
+Planning for <TASK>.
+Reasoning about <TASK>.
+Calling <TOOL>.
+<examples>
+
+Here's the message of the AI assistant:
+<message>
+{text}
+</message>
+
+Write your short description here:
+"""
+        res = ollama.generate(model=self.model_id, prompt=prompt, options={"temperature": 0.0})
+        return res.response
+
     def process_agent_trace(self):
         id_to_child_id = {t["span_id"]: [] for t in self.agent_trace}
         root_id = None
@@ -129,15 +124,53 @@ class Analyzer:
                 queue.extend(children)
         
         start_time = self.glances_df["timestamp"].iloc[0]
-        self.processed_agent_trace = [
-            {
+
+        processed = []
+        for t in tqdm(self.agent_trace):
+            if (t["end_time"] - t["start_time"]) / SEC_TO_NANOSEC < 0.1:
+                continue
+
+            attributes = t["attributes"]
+            kind = attributes["openinference.span.kind"]
+            desc = None
+
+            if kind == "LLM":
+                agent_desc = ""
+                token_desc = ""
+
+                output_msg = attributes.get("output.value", None)
+                input_tokens = attributes.get("llm.token_count.prompt", None)
+                output_tokens = attributes.get("llm.token_count.completion", None)
+                if output_msg is not None:
+                    agent_desc = self.describe_agent_action(output_msg)
+                if input_tokens is not None and output_tokens is not None:
+                    token_desc = f"Tkn: {input_tokens} in, {output_tokens} out"
+                desc = f"{agent_desc}\n({token_desc})"
+            
+            elif kind == "TOOL":
+                if "search" in t["name"].lower():
+                    input_value = attributes.get("input.value", None)
+                    if input_value is not None:
+                        try:
+                            input_value = json.loads(input_value)
+                            desc = input_value.get("query", None)
+                            if desc is None and "kwargs" in input_value:
+                                desc = input_value["kwargs"].get("query", None)
+                        except:
+                            pass
+            
+            span = {
                 "name": t["name"],
                 "level": id_to_level[t["span_id"]],
                 "start_time": (t["start_time"] - start_time) / SEC_TO_NANOSEC,
                 "end_time": (t["end_time"] - start_time) / SEC_TO_NANOSEC,
-                "attributes": t["attributes"],
-            } for t in self.agent_trace if (t["end_time"] - t["start_time"]) / SEC_TO_NANOSEC >= 0.1
-        ]
+                "kind": kind,
+                "desc": desc.strip() if desc is not None else "",
+            }
+            processed.append(span)
+
+        self.processed_agent_trace = processed
+
 
     def get_sorted_topmost_spans(self):
         spans = sorted(self.processed_agent_trace, key=lambda t: t["start_time"])
@@ -157,6 +190,47 @@ class Analyzer:
             top_spans.append(top)
 
         return top_spans
+
+    def wrap_text_to_axis_width(self, ax, text, x_start, x_end, fontsize=None):
+        """
+        Wrap text so that it fits within the horizontal space between x_start and x_end in an axes.
+        
+        Parameters:
+        - ax: matplotlib Axes
+        - text: str, the original unwrapped text
+        - x_start: float, starting x-value (data units)
+        - x_end: float, ending x-value (data units)
+        - fontsize: optional dict, font settings (same as used in ax.text)
+        
+        Returns:
+        - wrapped_text: str, text with line breaks inserted to fit within the pixel width
+        """
+
+        renderer = ax.figure.canvas.get_renderer()
+        max_width_px = ax.transData.transform((x_end, 0))[0] - ax.transData.transform((x_start, 0))[0]
+
+        # Estimate the width of each word and wrap accordingly
+        words = text.split()
+        lines = []
+        current_line = ""
+
+        for word in words:
+            test_line = current_line + (" " if current_line else "") + word
+            text_obj = ax.text(0, 0, test_line, fontsize=fontsize)
+            text_width = text_obj.get_window_extent(renderer=renderer).width
+            text_obj.remove()
+
+            if text_width <= max_width_px:
+                current_line = test_line
+            else:
+                if current_line:
+                    lines.append(current_line)
+                current_line = word
+
+        if current_line:
+            lines.append(current_line)
+
+        return "\n".join(lines)
 
     def plot_trace_execution_timeline_full(self, ax):
         # Color
@@ -262,16 +336,16 @@ class Analyzer:
             "name": "Init",
             "start_time": 0,
             "end_time": agent_trace[0]["start_time"],
-            "attributes": {"openinference.span.kind": other_label}
+            "kind": other_label,
         }
         custom_end_trace = {
             "name": "End",
             "start_time": agent_trace[-1]["end_time"],
             "end_time": self.glances_df["timestamp_plot"].iloc[-1],
-            "attributes": {"openinference.span.kind": other_label}
+            "kind": other_label,
         }
         grouped_agent_trace = [
-            sorted([t for t in agent_trace if t["attributes"]["openinference.span.kind"] == kind], key=lambda t: t["start_time"])
+            sorted([t for t in agent_trace if t["kind"] == kind], key=lambda t: t["start_time"])
             for kind in ["LLM", "TOOL"]
         ]
         grouped_agent_trace.append([custom_init_trace, custom_end_trace])
@@ -280,8 +354,9 @@ class Analyzer:
                 stage = t["name"]
                 t_start = t["start_time"]
                 t_end = t["end_time"]
-                attributes = t["attributes"]
-                kind = attributes["openinference.span.kind"]
+                kind = t["kind"]
+                desc = t.get("desc", None)
+
                 duration = max(t_end - t_start, 0.2)
                 y_pos = level_positions[type_to_level[kind]]
                 color = stage_to_color[stage]
@@ -303,28 +378,12 @@ class Analyzer:
                     ax.text(bar_center, y_pos, stage, ha='center', va='center', fontsize=fontsize)
 
                 # Draw extra annotation text outside of bar:
-                if kind == "LLM":
-                    input_tokens = attributes.get("llm.token_count.prompt", None)
-                    output_tokens = attributes.get("llm.token_count.completion", None)
-                    if input_tokens is not None and output_tokens is not None:
-                        text = f"Tkn: {input_tokens} in, {output_tokens} out"
-                        text = wrap_text_to_axis_width(ax, text, t_start, t_start + duration, fontsize=fontsize)
-                        ax.text(bar_center, y_pos - bar_height, text, ha="center", va="top", fontsize=fontsize)
-                elif kind == "TOOL":
-                    text = None
-                    if "search" in stage.lower():
-                        input_value = attributes.get("input.value", None)
-                        if input_value is not None:
-                            try:
-                                input_value = json.loads(input_value)
-                                text = input_value.get("query", None)
-                                if text is None and "kwargs" in input_value:
-                                    text = input_value["kwargs"].get("query", None)
-                            except:
-                                pass
-                    
-                    if text is not None:
-                        ax.text(bar_center, y_pos + bar_height, text[:50], ha="center", va="top", fontsize=fontsize)
+                if desc is not None and len(desc) > 0:
+                    if kind == "LLM":
+                        text = self.wrap_text_to_axis_width(ax, desc, t_start, t_start + duration, fontsize=6)
+                        ax.text(bar_center, y_pos - bar_height, text, ha="center", va="top", fontsize=6)
+                    elif kind == "TOOL":
+                        ax.text(bar_center, y_pos + bar_height, desc[:50], ha="center", va="top", fontsize=fontsize)
 
         # Legend
         legend_handles = [mpatches.Patch(color=color, label=stage) for stage, color in stage_to_color.items()]
@@ -400,10 +459,11 @@ class Analyzer:
         ax_stage.set_xlabel("Time Elapsed (sec)")
 
         plt.tight_layout()
-        if self.output_ext == "png":
-            plt.savefig(f"{self.output_dir}/{save_name}.{self.output_ext}", dpi=300)
-        else:
-            plt.savefig(f"{self.output_dir}/{save_name}.{self.output_ext}")
+        for ext in self.output_ext:
+            if ext == "png":
+                plt.savefig(f"{self.output_dir}/{save_name}.{ext}", dpi=300)
+            else:
+                plt.savefig(f"{self.output_dir}/{save_name}.{ext}")
         plt.show()
 
     def plot_gpu_metrics(self):
@@ -473,7 +533,9 @@ class Analyzer:
 
 
     def analyze(self):
+        print("Processing glances...")
         self.process_glances_log()
+        print("Processing trace...")
         self.process_agent_trace()
 
         self.plot_gpu_metrics()
@@ -491,8 +553,9 @@ Examples:
 python analyze.py \\
 --glances_log_path ./logs/smolagent_glances.jsonl \\
 --agent_trace_path ./logs/smolagent_trace.json \\
+--model_id qwen2.5-coder:32b \\
 --output_dir ./analysis_logs \\
---output_ext png
+--output_ext png pdf
 """
     parser = argparse.ArgumentParser(
         description="Analyze an execution's trace and along with its system resource usage",
@@ -501,11 +564,19 @@ python analyze.py \\
     )
     parser.add_argument("--glances_log_path", type=str, required=True, help="Path to the glances log.")
     parser.add_argument("--agent_trace_path", type=str, required=True, help="Path to the agent's trace.")
-    parser.add_argument("--output_dir", type=str, required=True, help="Path to the directory to write analyses, figures, etc.")
-    parser.add_argument("--output_ext", type=str, choices=["png", "pdf", "svg"], default="png", help="File type for saving (e.g., png, pdf, svg).")
+    parser.add_argument("--model_id", type=str, default=None, help="Ollama model id for analyzing.")
     parser.add_argument("--full_execution", action=argparse.BooleanOptionalAction, help="Whether to print all agent's execution steps.")
+    parser.add_argument("--output_dir", type=str, required=True, help="Path to the directory to write analyses, figures, etc.")
+    parser.add_argument("--output_ext", type=str, nargs="+", choices=["png", "pdf", "svg"], default=["png"], help="File type for saving (e.g., png, pdf, svg).")
+
 
     args = parser.parse_args()
 
-    analyzer = Analyzer(args.glances_log_path, args.agent_trace_path, args.output_dir, args.output_ext, args.full_execution)
+    analyzer = Analyzer(
+        args.glances_log_path, args.agent_trace_path,
+        model_id=args.model_id,
+        full_execution=args.full_execution,
+        output_dir=args.output_dir,
+        output_ext=args.output_ext,
+    )
     analyzer.analyze()
