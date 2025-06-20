@@ -7,9 +7,11 @@ import os
 import json
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import numpy as np
 import ollama
 import pandas as pd
 import seaborn as sns
+import sys
 from tqdm import tqdm
 from collections import deque
 from pathlib import Path
@@ -17,24 +19,35 @@ from pathlib import Path
 SEC_TO_NANOSEC = 1_000_000_000
 GB_TO_BYTE = 1024 * 1024 * 1024
 
+POWER_LOG_TYPE_MAC = "mac"
+
 class Analyzer:
     def __init__(
-        self, glances_log_path, agent_trace_path,
+        self,
+        glances_log_path,
+        agent_trace_path,
+        power_log_path=None,
+        power_log_type=None,
         model_id=None, # LLM model for analyzing
         full_execution=False,
         output_dir="./analysis_logs", output_ext=["png"],
     ):
         with Path(glances_log_path).open("r", encoding="utf-8") as f:
-            glances_log = [json.loads(l) for l in f if l.strip()]
+            self.glances_log = [json.loads(l) for l in f if l.strip()]
         with Path(agent_trace_path).open("r", encoding="utf-8") as f:
-            agent_trace = json.load(f)
-            
-        self.glances_log = glances_log
-        self.agent_trace = agent_trace
-
+            self.agent_trace = json.load(f)
+        
+        if power_log_path is not None:
+            self.power_log_type = power_log_type
+            if power_log_type == POWER_LOG_TYPE_MAC:
+                with Path(power_log_path).open("r", encoding="utf-8") as f:
+                    self.power_log = [json.loads(l) for l in f if l.strip()]
+            else:
+                raise NotImplemented("Only power log from macOS's powermetrics is supported for now")
+        
         if model_id is not None: # Make sure model_id is correct
             ollama.show(model=model_id)
-            self.model_id = model_id
+        self.model_id = model_id
 
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         self.output_dir = output_dir
@@ -72,6 +85,43 @@ class Analyzer:
         df["diskio_write_bytes_per_sec_plot"] = df["diskio_write_bytes_per_sec"] / GB_TO_BYTE
 
         self.glances_df = df
+
+    def process_power_log(self):
+        if self.power_log_type != POWER_LOG_TYPE_MAC:
+            raise NotImplemented("Only power log from macOS's powermetrics is supported for now")
+
+        data = [{
+            "timestamp": l["timestamp"],
+            "elapsed_ns": l["elapsed_ns"],
+            "thermal_pressure": l["thermal_pressure"],
+            "cpu_energy": l["processor"]["cpu_energy"],
+            "cpu_power": l["processor"]["cpu_power"],
+            "gpu_energy": l["processor"]["gpu_energy"],
+            "gpu_power": l["processor"]["gpu_power"],
+            "combined_power": l["processor"]["combined_power"],
+            "all_processes_energy_impact": l["all_tasks"]["energy_impact"],
+            "processes_energy_impact": sum(p["energy_impact"] for p in l["tasks"]),
+            "processes_diskio_read_bytes": sum(p["diskio_bytesread"] for p in l["tasks"]),
+            "processes_diskio_write_bytes": sum(p["diskio_byteswritten"] for p in l["tasks"]),
+            "processes_diskio_read_bytes_per_sec": sum(p["diskio_bytesread_per_s"] for p in l["tasks"]),
+            "processes_diskio_write_bytes_per_sec": sum(p["diskio_byteswritten_per_s"] for p in l["tasks"]),
+            "processes_network_sent_bytes": sum(p["bytes_sent"] for p in l["tasks"]),
+            "processes_network_received_bytes": sum(p["bytes_received"] for p in l["tasks"]),
+            "processes_network_sent_bytes_per_sec": sum(p["bytes_sent_per_s"] for p in l["tasks"]),
+            "processes_network_received_bytes_per_sec": sum(p["bytes_received_per_s"] for p in l["tasks"]),
+            "processes_network_sent_packets": sum(p["packets_sent"] for p in l["tasks"]),
+            "processes_network_received_packets": sum(p["packets_received"] for p in l["tasks"]),
+            "processes_network_sent_packets_per_sec": sum(p["packets_sent_per_s"] for p in l["tasks"]),
+            "processes_network_received_packets_per_sec": sum(p["packets_received_per_s"] for p in l["tasks"]),
+        } for l in self.power_log]
+        df = pd.DataFrame.from_dict(data)
+
+        start_time = df["timestamp"].iloc[0] - self.glances_df["timestamp"].iloc[0]
+        elapsed_times = df["elapsed_ns"].to_list()
+        elapsed_times[0] = 0
+        df["timestamp_plot"] = (start_time + np.cumsum(elapsed_times)) / SEC_TO_NANOSEC
+
+        self.power_df = df
 
     def describe_agent_action(self, text):
         if self.model_id is None:
@@ -398,10 +448,18 @@ Write your short description here:
         ax.set_xlim(-custom_end_trace["end_time"] * 0.01, custom_end_trace["end_time"] * 1.01)
 
     def plot_metrics(
-        self, save_name, title, y_axis_label, metrics,
-        second_y_axis_label=None, second_y_axis_color="black", second_subplot=False, second_metrics=None,
+        self,
+        save_name,
+        title,
+        y_axis_label,
+        metrics,
+        power=False,
+        second_y_axis_label=None,
+        second_y_axis_color="black",
+        second_subplot=False,
+        second_metrics=None,
     ):
-        if second_subplot:
+        if second_metrics is not None and second_subplot:
             fig, (ax, ax_second, ax_stage) = plt.subplots(
                 3, 1, figsize=(12, 8), sharex=True, gridspec_kw={'height_ratios': [1.5, 1.5, 1]}
             )
@@ -410,6 +468,8 @@ Write your short description here:
                 2, 1, figsize=(12, 8), sharex=True, gridspec_kw={'height_ratios': [3, 1]}
             )
         linewidth = 0.75
+
+        df = self.glances_df if not power else self.power_df
 
         # Plot first y
         for m in metrics:
@@ -420,41 +480,48 @@ Write your short description here:
                 metric, label, plot_kwargs = m
             else:
                 raise Exception("Invalid metrics input")
-            ax.plot("timestamp_plot", metric, data=self.glances_df, label=label, linewidth=linewidth, **plot_kwargs)
+            ax.plot("timestamp_plot", metric, data=df, label=label, linewidth=linewidth, **plot_kwargs)
         
         ax.set_ylabel(y_axis_label)
         ax.tick_params(axis="y")
         ax.set_title(title)
         ax.grid(True, alpha=0.3, axis="y")
-        if len(metrics) > 1:
-            ax.legend(loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=len(metrics), frameon=False)
         
-
         # Plot second y
-        if second_y_axis_label is not None:
+        if second_metrics is not None:
             if not second_subplot:
                 ax_second = ax.twinx()
+            else:
+                ax_second.grid(True, alpha=0.3, axis="y")
             for m in second_metrics:
                 if len(m) == 2:
                     metric, label = m
                     plot_kwargs = {}
                 elif len(m) == 3:
                     metric, label, plot_kwargs = m
-                ax_second.plot("timestamp_plot", metric, data=self.glances_df, label=label, linewidth=linewidth, **plot_kwargs)
+                ax_second.plot("timestamp_plot", metric, data=df, label=label, linewidth=linewidth, **plot_kwargs)
 
             ax_second.set_ylabel(second_y_axis_label, color=second_y_axis_color)
             ax_second.tick_params(axis="y", labelcolor=second_y_axis_color)
-            
+        
+        # Plot legend(s)
+        if second_metrics is not None:
             if second_subplot:
-                ax_second.grid(True, alpha=0.3, axis="y")
-            if len(second_metrics) > 1:
-                ax_second.legend(loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=len(second_metrics), frameon=False)
+                if len(metrics) > 1:
+                    ax.legend(loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=len(metrics), frameon=False)
+                if len(second_metrics) > 1:
+                    ax_second.legend(loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=len(second_metrics), frameon=False)            
+            else:
+                ax.legend(loc="upper left", bbox_to_anchor=(0.0, 0.0), ncol=len(metrics), frameon=False)
+                ax_second.legend(loc="upper right", bbox_to_anchor=(1.0, 0.0), ncol=len(second_metrics), frameon=False)
+        elif len(metrics) > 1:
+            ax.legend(loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=len(metrics), frameon=False)
 
         # Plot stage timeline
         if self.full_execution:
             self.plot_trace_execution_timeline_full(ax_stage)
         else:
-            other_axes=[ax] if (second_y_axis_label is None or not second_subplot) else [ax, ax_second]
+            other_axes=[ax] if (second_metrics is None or not second_subplot) else [ax, ax_second]
             self.plot_trace_execution_timeline_summarized(ax_stage, other_axes)
         ax_stage.set_xlabel("Time Elapsed (sec)")
 
@@ -531,6 +598,24 @@ Write your short description here:
             ],
         )
 
+    def plot_power_metrics(self):
+        self.plot_metrics(
+            "power",
+            title="CPU/GPU Power and Process Energy Impact Over Time",
+            y_axis_label="mW",
+            metrics=[
+                ("cpu_power", "CPU Power"),
+                ("gpu_power", "GPU Power"),
+                ("combined_power", "Combined Power"),
+            ],
+            second_y_axis_label="Energy Impact Score",
+            second_y_axis_color="grey",
+            second_metrics=[
+                ("all_processes_energy_impact", "Energy Impact", {"color": "grey"}),
+            ],
+            power=True,
+        )
+
 
     def analyze(self):
         print("Processing glances...")
@@ -544,6 +629,11 @@ Write your short description here:
         self.plot_mem_metrics()
         self.plot_diskio_metrics()
         self.plot_concurrency_metrics()
+
+        if self.power_log is not None:
+            print("Processing power...")
+            self.process_power_log()
+            self.plot_power_metrics()
     
 
 if __name__ == "__main__":
@@ -553,6 +643,8 @@ Examples:
 python analyze.py \\
 --glances_log_path ./logs/smolagent_glances.jsonl \\
 --agent_trace_path ./logs/smolagent_trace.json \\
+--power_log_path ./logs/smolagent_powermetrics.jsonl \\
+--power_log_type mac
 --model_id qwen2.5-coder:32b \\
 --output_dir ./analysis_logs \\
 --output_ext png pdf
@@ -564,16 +656,25 @@ python analyze.py \\
     )
     parser.add_argument("--glances_log_path", type=str, required=True, help="Path to the glances log.")
     parser.add_argument("--agent_trace_path", type=str, required=True, help="Path to the agent's trace.")
+    parser.add_argument("--power_log_path", type=str, default=None, help="Path to the power measurement log.")
+    parser.add_argument(
+        "--power_log_type", type=str,
+        required="--power_log_path" in sys.argv,
+        choices=[POWER_LOG_TYPE_MAC],
+        help="Type of power measurement."
+    )
     parser.add_argument("--model_id", type=str, default=None, help="Ollama model id for analyzing.")
     parser.add_argument("--full_execution", action=argparse.BooleanOptionalAction, help="Whether to print all agent's execution steps.")
     parser.add_argument("--output_dir", type=str, required=True, help="Path to the directory to write analyses, figures, etc.")
     parser.add_argument("--output_ext", type=str, nargs="+", choices=["png", "pdf", "svg"], default=["png"], help="File type for saving (e.g., png, pdf, svg).")
 
-
     args = parser.parse_args()
 
     analyzer = Analyzer(
-        args.glances_log_path, args.agent_trace_path,
+        args.glances_log_path,
+        args.agent_trace_path,
+        power_log_path=args.power_log_path,
+        power_log_type=args.power_log_type,
         model_id=args.model_id,
         full_execution=args.full_execution,
         output_dir=args.output_dir,

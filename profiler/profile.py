@@ -15,6 +15,7 @@ import sys
 import threading
 import tempfile
 import time
+from datetime import timezone
 from pathlib import Path
 
 
@@ -113,7 +114,7 @@ class Profiler:
 
         self.power_process = subprocess.Popen(
             [
-                "sudo", "powermetrics",
+                "powermetrics",
                 "--format", "plist",
                 "--sample-rate", str(self.frequency),
                 "--samplers", "cpu_power,gpu_power,thermal,tasks",
@@ -239,10 +240,10 @@ class Profiler:
                 if self.should_include_process(t["pid"], t["name"])
             ]
             # Convert datetime object to Unix (ns) for JSON
-            log["timestamp"] = log["timestamp"].timestamp() * 1_000_000_000
+            log["timestamp"] = int(log["timestamp"].replace(tzinfo=timezone.utc).timestamp() * 1_000_000_000)
         logs = [l for l in logs if len(l["tasks"]) > 0]
         self.save_jsonl(logs, self.power_output_path)
-        # os.remove(self.power_tmp_file)
+        os.remove(self.power_tmp_file)
         print(f"Powermetrics log saved")
 
     def start_profiling(self):
@@ -313,7 +314,7 @@ python profile.py \\
     parser.add_argument("--glances_process_filter", type=str, default=None, help="Regex for filtering glances process.")
     parser.add_argument("--glances_output_path", type=str, default=None, help="Path to save the glances log in JSONL.")
     parser.add_argument("--power_output_path", type=str, default=None, help="Path to save the processed power profile log in JSONL format.")
-    parser.add_argument("--frequency", type=float, default=1000, help="Samples resource metrics every <frequency> milliseconds")
+    parser.add_argument("--frequency", type=int, default=1000, help="Samples resource metrics every <frequency> milliseconds")
     parser.add_argument("--capture_stdout", action=argparse.BooleanOptionalAction, help="Whether to print the output of the agent to stdout.")
     parser.add_argument("--include_ollama", action=argparse.BooleanOptionalAction, help="Whether to include Ollama in the profiling.")
 
