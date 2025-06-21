@@ -60,7 +60,9 @@ class Analyzer:
             "gpu_mem": l["gpu"][0]["mem_raw"] if len(l["gpu"]) > 0 else 0,
             "gpu_mem_pct": l["gpu"][0]["mem"] if len(l["gpu"]) > 0 else 0,
             "gpu_usage": l["gpu"][0]["proc"] if len(l["gpu"]) > 0 else 0,
+            "gpu_temp": l["gpu"][0]["temperature"] if len(l["gpu"]) > 0 else 0,
             "cpu_total_pct": l["cpu"]["total"],
+            "smctemp_cpu": next((s["value"] for s in l["sensors"] if s["label"] == "smctemp"), 0),
             "processes_count": len(l["processlist"]),
             "processes_cpu_pct": sum(p["cpu_percent"] for p in l["processlist"]),
             "processes_num_threads": sum(p["num_threads"] for p in l["processlist"]),
@@ -455,9 +457,9 @@ Write your short description here:
         metrics,
         power=False,
         second_y_axis_label=None,
-        second_y_axis_color="black",
         second_subplot=False,
         second_metrics=None,
+        second_metrics_power=False,
     ):
         if second_metrics is not None and second_subplot:
             fig, (ax, ax_second, ax_stage) = plt.subplots(
@@ -489,6 +491,7 @@ Write your short description here:
         
         # Plot second y
         if second_metrics is not None:
+            second_df = self.glances_df if not second_metrics_power else self.power_df
             if not second_subplot:
                 ax_second = ax.twinx()
             else:
@@ -499,10 +502,10 @@ Write your short description here:
                     plot_kwargs = {}
                 elif len(m) == 3:
                     metric, label, plot_kwargs = m
-                ax_second.plot("timestamp_plot", metric, data=df, label=label, linewidth=linewidth, **plot_kwargs)
+                ax_second.plot("timestamp_plot", metric, data=second_df, label=label, linewidth=linewidth, **plot_kwargs)
 
-            ax_second.set_ylabel(second_y_axis_label, color=second_y_axis_color)
-            ax_second.tick_params(axis="y", labelcolor=second_y_axis_color)
+            ax_second.set_ylabel(second_y_axis_label)
+            ax_second.tick_params(axis="y")
         
         # Plot legend(s)
         if second_metrics is not None:
@@ -540,7 +543,6 @@ Write your short description here:
             y_axis_label="GPU Memory (GB)",
             metrics=[("gpu_mem_plot", "GPU Memory (GB)")],
             second_y_axis_label="GPU Utilization (%)",
-            second_y_axis_color="green",
             second_metrics=[("gpu_usage", "GPU Utilization (%)", {"color": "green", "linestyle": "-."})],
         )
 
@@ -608,12 +610,30 @@ Write your short description here:
                 ("gpu_power", "GPU Power"),
                 ("combined_power", "Combined Power"),
             ],
+            power=True,
             second_y_axis_label="Energy Impact Score",
-            second_y_axis_color="grey",
             second_metrics=[
                 ("all_processes_energy_impact", "Energy Impact", {"color": "grey"}),
             ],
+            second_metrics_power=True,
+        )
+
+    def plot_power_and_temp_metrics(self):
+        self.plot_metrics(
+            "power_and_temp",
+            title="CPU/GPU Power and Temperature Over Time",
+            y_axis_label="mW",
+            metrics=[
+                ("cpu_power", "CPU Power"),
+                ("gpu_power", "GPU Power"),
+            ],
             power=True,
+            second_y_axis_label="Temperature (Celcius)",
+            second_metrics=[
+                ("smctemp_cpu", "CPU Temperature", {"linestyle": "-", "color": "green"}),
+                ("gpu_temp", "GPU Temperature", {"linestyle": "-", "color": "brown"}),
+            ],
+            second_metrics_power=False,
         )
 
 
@@ -634,6 +654,7 @@ Write your short description here:
             print("Processing power...")
             self.process_power_log()
             self.plot_power_metrics()
+            self.plot_power_and_temp_metrics()
     
 
 if __name__ == "__main__":
