@@ -8,6 +8,7 @@
 
 """Stdout interface class."""
 
+import json
 import time
 
 from glances.globals import printandflush
@@ -39,14 +40,17 @@ class GlancesStdoutJson:
 
         Refresh every duration second.
         """
+        output = {
+            "timestamp": time.time_ns(),
+        }
         for plugin in self.plugins_list:
             # Check if the plugin exist and is enable
             if plugin in stats.getPluginsList() and stats.get_plugin(plugin).is_enabled():
-                stat = stats.get_plugin(plugin).get_json()
+                output[plugin] = stats.get_plugin(plugin).get_raw()
             else:
                 continue
-            # Display stats
-            printandflush(f'{plugin}: {stat}')
+        # Display stats
+        printandflush(json.dumps(output))
 
         # Wait until next refresh
         if duration > 0:

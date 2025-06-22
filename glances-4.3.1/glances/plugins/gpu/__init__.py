@@ -17,6 +17,7 @@ Currently supported:
 from glances.globals import to_fahrenheit
 from glances.plugins.gpu.cards.amd import AmdGPU
 from glances.plugins.gpu.cards.nvidia import NvidiaGPU
+from glances.plugins.gpu.cards.apple import AppleIGPU
 from glances.plugins.plugin.model import GlancesPluginModel
 
 # Fields description
@@ -76,6 +77,7 @@ class PluginModel(GlancesPluginModel):
         # Init the GPU API
         self.nvidia = NvidiaGPU()
         self.amd = AmdGPU()
+        self.apple = AppleIGPU()
         # Just for test purpose (uncomment to test on computer without AMD GPU)
         # self.amd = AmdGPU(drm_root_folder='./tests-data/plugins/gpu/amd/sys/class/drm')
 
@@ -86,6 +88,7 @@ class PluginModel(GlancesPluginModel):
         """Overwrite the exit method to close the GPU API."""
         self.nvidia.exit()
         self.amd.exit()
+        self.apple.exit()
 
         # Call the father exit method
         super().exit()
@@ -104,6 +107,7 @@ class PluginModel(GlancesPluginModel):
         # Get the stats
         stats.extend(self.nvidia.get_device_stats())
         stats.extend(self.amd.get_device_stats())
+        stats.extend(self.apple.get_device_stats())
 
         # !!!
         # Uncomment to test on computer without GPU

@@ -8,7 +8,10 @@
 
 """Battery plugin."""
 
+import platform
+import plistlib
 import psutil
+import subprocess
 
 from glances.globals import LINUX
 from glances.logger import logger
@@ -95,6 +98,15 @@ class GlancesGrabBat:
         else:
             self.bat = None
 
+    def update_bat_list(self, data, field, label, unit):
+        value = data.get(field, None)
+        if value is not None:
+            self.bat_list.append({
+                "label": label,
+                "value": value,
+                "unit": unit,
+            })
+
     def update(self):
         """Update the stats."""
         self.bat_list = []
@@ -128,6 +140,51 @@ class GlancesGrabBat:
                     'status': 'Charging' if self.bat.sensors_battery().power_plugged else 'Discharging',
                 }
             ]
+
+        if platform.system() == "Darwin":
+            try:
+                ioreg = subprocess.check_output(["ioreg", "-r", "-n", "AppleSmartBattery", "-a"])
+                bat_info = plistlib.loads(ioreg)[0]
+                self.update_bat_list(
+                    data=bat_info,
+                    field="InstantAmperage",
+                    label="Battery Current",
+                    unit="mA",
+                )
+                self.update_bat_list(
+                    data=bat_info,
+                    field="AppleRawCurrentCapacity",
+                    label="Battery Raw Capacity",
+                    unit="mAh",
+                )
+                self.update_bat_list(
+                    data=bat_info,
+                    field="Voltage",
+                    label="Battery Voltage",
+                    unit="mW",
+                )
+                self.update_bat_list(
+                    data=bat_info,
+                    field="Temperature",
+                    label="Battery Temperature",
+                    unit="dK",
+                )
+                self.update_bat_list(
+                    data=bat_info,
+                    field="VirtualTemperature",
+                    label="Battery Virtual Temperature",
+                    unit="dK",
+                )
+                power_data = bat_info.get("PowerTelemetryData", None)
+                if power_data is not None:
+                    self.update_bat_list(
+                        data=power_data,
+                        field="BatteryPower",
+                        label="Battery Power",
+                        unit="mW",
+                    )
+            except:
+                pass 
 
     def get(self):
         """Get the stats."""

@@ -12,7 +12,9 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import platform
 import psutil
+import subprocess
 
 from glances.globals import to_fahrenheit
 from glances.logger import logger
@@ -337,8 +339,19 @@ class GlancesGrabSensors:
             # in the curses interface.
             warnings.filterwarnings("ignore")
 
-            # psutil>=5.1.0, Linux-only
-            return psutil.sensors_temperatures()
+            os_name = platform.system()
+            if os_name == "Linux":
+                # psutil>=5.1.0, Linux-only
+                return psutil.sensors_temperatures()
+            elif os_name == "Darwin":
+                try:
+                    temp = subprocess.check_output(["smctemp", "-c", "-i20", "-n4"], text=True, stderr=subprocess.DEVNULL)
+                    temp = float(temp.strip())
+                    return {"apple": [psutil._common.shwtemp("smctemp", temp, None, None)]}
+                except:
+                    return {}
+            else:
+                return {}
 
         if self.sensor_type == sensors_definition.get('fan_speed').get('type'):
             # psutil>=5.2.0, Linux-only
