@@ -63,6 +63,9 @@ class Analyzer:
             "gpu_temp": l["gpu"][0]["temperature"] if len(l["gpu"]) > 0 else 0,
             "cpu_total_pct": l["cpu"]["total"],
             "smctemp_cpu": next((s["value"] for s in l["sensors"] if s["label"] == "smctemp"), 0),
+            "battery_percent": next((s["value"] for s in l["sensors"] if s["label"] == "Battery"), 0),
+            "battery_discharge": next((-min(s["value"], 0) for s in l["sensors"] if s["label"] == "Battery Current"), 0),
+            "battery_temp": next(((s["value"] / 10 - 273.15) for s in l["sensors"] if s["label"] == "Battery Virtual Temperature"), 0),
             "processes_count": len(l["processlist"]),
             "processes_cpu_pct": sum(p["cpu_percent"] for p in l["processlist"]),
             "processes_num_threads": sum(p["num_threads"] for p in l["processlist"]),
@@ -600,6 +603,28 @@ Write your short description here:
             ],
         )
 
+    def plot_temp_metrics(self):
+        self.plot_metrics(
+            "temp",
+            title="CPU, GPU, and Battery Temperature Over Time",
+            y_axis_label="Celcius",
+            metrics=[
+                ("smctemp_cpu", "CPU Temperature"),
+                ("gpu_temp", "GPU Temperature"),
+                ("battery_temp", "Battery Temperature"),
+            ],
+        )
+
+    def plot_battery_metrics(self):
+        self.plot_metrics(
+            "battery",
+            title="Battery Capacity and Discharge Over Time",
+            y_axis_label="Capacity (%)",
+            metrics=[("battery_percent", "Capacity")],
+            second_y_axis_label="Discharge (mA)",
+            second_metrics=[("battery_discharge", "Discharge", {"color": "brown"})],
+        )
+
     def plot_power_metrics(self):
         self.plot_metrics(
             "power",
@@ -636,6 +661,23 @@ Write your short description here:
             second_metrics_power=False,
         )
 
+    def plot_power_and_battery_metrics(self):
+        self.plot_metrics(
+            "power_and_battery",
+            title="CPU/GPU Power and Battery Discharge Over Time",
+            y_axis_label="mW",
+            metrics=[
+                ("cpu_power", "CPU Power"),
+                ("gpu_power", "GPU Power"),
+            ],
+            power=True,
+            second_y_axis_label="mA",
+            second_metrics=[
+                ("battery_discharge", "Battery Discharge", {"linestyle": "-", "color": "brown"}),
+            ],
+            second_metrics_power=False,
+        )
+
 
     def analyze(self):
         print("Processing glances...")
@@ -649,12 +691,15 @@ Write your short description here:
         self.plot_mem_metrics()
         self.plot_diskio_metrics()
         self.plot_concurrency_metrics()
+        self.plot_temp_metrics()
+        self.plot_battery_metrics()
 
         if self.power_log is not None:
             print("Processing power...")
             self.process_power_log()
             self.plot_power_metrics()
             self.plot_power_and_temp_metrics()
+            self.plot_power_and_battery_metrics()
     
 
 if __name__ == "__main__":
