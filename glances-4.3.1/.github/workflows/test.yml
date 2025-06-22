@@ -1,0 +1,145 @@
+# Run unitary test
+
+name: test
+
+on:
+  workflow_call:
+
+jobs:
+
+  source-code-checks:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check formatting with Ruff
+        uses: chartboost/ruff-action@v1
+        with:
+          args: 'format --check'
+
+      - name: Check linting with Ruff
+        uses: chartboost/ruff-action@v1
+        with:
+          args: 'check'
+
+      # - name: Static type check
+      #   run: |
+      #     echo "Skipping static type check for the moment, too much error...";
+      #     # pip install pyright
+      #     # pyright glances
+
+
+  test-linux:
+
+    needs: source-code-checks
+    # https://github.com/actions/runner-images?tab=readme-ov-file#available-images
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          if [ -f dev-requirements.txt ]; then python -m pip install -r dev-requirements.txt; fi
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
+
+      - name: Unitary tests
+        run: |
+          python -m pytest ./tests/test_core.py
+
+  # Error appear with h11, not related to Glances
+  # Should be tested if correction is done
+  # Installed c:\hostedtoolcache\windows\python\3.9.13\x64\lib\site-packages\exceptiongroup-1.2.1-py3.9.egg
+  # error: h11 0.14.0 is installed but h11<0.13,>=0.11 is required by {'httpcore'}
+  # Error: Process completed with exit code 1.
+  test-windows:
+
+    needs: source-code-checks
+    # https://github.com/actions/runner-images?tab=readme-ov-file#available-images
+    runs-on: windows-2022
+    strategy:
+      matrix:
+        # Windows-curses not available for Python 3.13 for the moment
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        if (Test-Path -PathType Leaf "dev-requirements.txt") { python -m pip install -r dev-requirements.txt }
+        if (Test-Path -PathType Leaf "requirements.txt") { python -m pip install -r requirements.txt }
+        pip install .
+
+    - name: Unitary tests
+      run: |
+        python -m pytest ./tests/test_core.py
+
+  test-macos:
+
+    needs: source-code-checks
+    # https://github.com/actions/runner-images?tab=readme-ov-file#available-images
+    runs-on: macos-14
+    strategy:
+      matrix:
+        # Only test the latest stable version
+        python-version: ["3.13"]
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          if [ -f dev-requirements.txt ]; then python -m pip install -r dev-requirements.txt; fi
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
+
+      - name: Unitary tests
+        run: |
+          python -m pytest ./tests/test_core.py
+
+  # Error when trying to implement #2749
+  # pkg: No packages available to install matching 'py-pip' have been found in the repositories
+  # test-freebsd:
+
+  #   runs-on: ubuntu-22.04
+
+  #   steps:
+
+  #     - uses: actions/checkout@v4
+
+  #     - name: Run tests
+  #       uses: vmactions/freebsd-vm@v1
+  #       with:
+  #         usesh: true
+  #         prepare: |
+  #           pkg install -y python3
+  #         run: |
+  #           set -e -x
+  #           python3 -m pip install pytest
+  #           python3 -m pip install --user -r dev-requirements.txt
+  #           python3 -m pip install --user -r requirements.txt
+  #           python3 -m pytest ./tests/test_core.py

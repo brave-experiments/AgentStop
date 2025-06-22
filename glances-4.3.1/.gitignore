@@ -1,0 +1,69 @@
+*~
+*.py[co]
+
+# Packages
+*.egg
+*.egg-info
+dist
+build
+
+# Eclipse and other IDE
+.idea
+*.pydevproject
+.project
+.metadata
+bin/**
+tmp/**
+tmp/**/*
+*.tmp
+*.bak
+*.swp
+*~.nib
+local.properties
+.classpath
+.settings/
+.loadpath
+
+# External tool builders
+.externalToolBuilders/
+*yarn.lock
+
+# Locally stored "Eclipse launch configurations"
+*.launch
+
+# CDT-specific
+.cproject
+
+# PDT-specific
+.buildpath
+
+# ctags
+.tags*
+
+# Sphinx
+_build
+
+# Tox
+.tox/
+
+# web ui
+node_modules/
+bower_components/
+
+# visual stdio code
+.vscode/
+
+# Snap packaging specific
+/snap/.snapcraft/
+/parts/
+/stage/
+/prime/
+
+/*.snap
+/*_source.tar.bz2
+
+# Virtual env
+/venv*/
+
+# Test
+.coverage

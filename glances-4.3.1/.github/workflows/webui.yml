@@ -1,0 +1,40 @@
+name: webui
+
+on:
+  workflow_call:
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [20.x]
+        # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Glances will be build with Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        cache-dependency-path: ./glances/outputs/static/package-lock.json
+    - name: Build Glances WebUI
+      working-directory: ./glances/outputs/static
+      # TODO: add the following line when https://github.com/nicolargo/glances/issues/2914 will be solved
+      #  npm audit fix
+      run: |
+        npm ci
+        npm run build
+    - name: Commit and push WebUI
+      env:
+        CI_COMMIT_MESSAGE: Continuous Integration Build Artifacts
+        CI_COMMIT_AUTHOR: Continuous Integration
+      run: |
+        git config --global user.name "${{ env.CI_COMMIT_AUTHOR }}"
+        git config --global user.email "username@users.noreply.github.com"
+        git add glances/outputs/static
+        /bin/bash -c "git commit -m '${{ env.CI_COMMIT_MESSAGE }}' || true"
+        git push
