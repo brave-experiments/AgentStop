@@ -124,11 +124,44 @@ class Analyzer:
         } for l in self.power_log]
         df = pd.DataFrame.from_dict(data)
 
-        start_time = df["timestamp"].iloc[0] - self.glances_df["timestamp"].iloc[0]
+        # Need to better approximate timestamps since the precision from powermetrics is 1 sec
+        glances_start_time = self.glances_df["timestamp"].iloc[0]
         elapsed_times = df["elapsed_ns"].to_list()
         elapsed_times[0] = 0
-        df["timestamp_plot"] = (start_time + np.cumsum(elapsed_times)) / SEC_TO_NANOSEC
+        coarse_times = (df["timestamp"] - glances_start_time).to_list()
+        n = df.shape[0]
+        corrected_time = [None] * n
 
+        # Find index of first change in timestamp
+        for i in range(n - 1):
+            if coarse_times[i] != coarse_times[i + 1]:
+                first_ts_change_idx = i + 1
+                break
+        
+        # For each timestamp change, snap the actual time to the new timestamp
+        # and add elapsed_ns until next timestamp change
+        i = first_ts_change_idx
+        while i < n:
+            cur_time = coarse_times[i]
+            prev_time = coarse_times[i - 1]
+            if cur_time == prev_time:
+                i += 1
+                continue
+            corrected_time[i] = cur_time
+            j = i + 1
+            elapsed = 0
+            while j < n and coarse_times[j] == cur_time:
+                elapsed += elapsed_times[j]
+                assert elapsed < SEC_TO_NANOSEC, "Elapsed timed must be < 1s during the same timestamp!"
+                corrected_time[j] = cur_time + elapsed
+                j += 1
+            i = j
+        
+        # Fix the time for the first few entries before the first ever ts change
+        for i in range(first_ts_change_idx - 1, -1, -1):
+            corrected_time[i] = corrected_time[i + 1] - elapsed_times[i + 1]
+
+        df["timestamp_plot"] = np.array(corrected_time) / SEC_TO_NANOSEC
         self.power_df = df
 
     def describe_agent_action(self, text):
@@ -730,14 +763,14 @@ Write your short description here:
         print("Processing trace...")
         self.process_agent_trace()
 
-        self.plot_gpu_metrics()
-        self.plot_cpu_metrics()
-        self.plot_cpu_and_gpu_metrics()
-        self.plot_mem_metrics()
-        self.plot_diskio_metrics()
-        self.plot_concurrency_metrics()
-        self.plot_temp_metrics()
-        self.plot_battery_metrics()
+        # self.plot_gpu_metrics()
+        # self.plot_cpu_metrics()
+        # self.plot_cpu_and_gpu_metrics()
+        # self.plot_mem_metrics()
+        # self.plot_diskio_metrics()
+        # self.plot_concurrency_metrics()
+        # self.plot_temp_metrics()
+        # self.plot_battery_metrics()
 
         if self.power_log is not None:
             print("Processing power...")
