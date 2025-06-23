@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import time
 
 from dotenv import load_dotenv
 from openinference.instrumentation import get_attributes_from_context
@@ -10,6 +11,7 @@ from openinference.instrumentation.smolagents._wrappers import (
     OPENINFERENCE_SPAN_KIND,
     CHAIN,
     INPUT_VALUE,
+    LLM,
     OUTPUT_VALUE,
     _get_input_value,
 )
@@ -54,23 +56,29 @@ class _GeneratorStepWrapper:
                 **dict(get_attributes_from_context()),
             },
         ) as span:
-            last_item = None
-            for item in wrapped(*args, **kwargs):
-                yield item
-                last_item = item
-            if self._is_planning_step:
-                assert isinstance(last_item, PlanningStep)
-                span.set_attribute(OUTPUT_VALUE, safe_json_dumps(last_item.dict()))
-            else:
-                step_log = args[0]  # ActionStep
-                span.set_attribute(OUTPUT_VALUE, safe_json_dumps(step_log.dict()))
-                if step_log.error is not None:
-                    span.record_exception(step_log.error)
-            span.set_status(trace.StatusCode.OK)
+            try:
+                last_item = None
+                for item in wrapped(*args, **kwargs):
+                    yield item
+                    last_item = item
+            finally:
+                if self._is_planning_step:
+                    assert isinstance(last_item, PlanningStep)
+                    span.set_attribute(OUTPUT_VALUE, safe_json_dumps(last_item.dict()))
+                else:
+                    step_log = args[0]  # ActionStep
+                    span.set_attribute(OUTPUT_VALUE, safe_json_dumps(step_log.dict()))
+                    if step_log.error is not None:
+                        span.record_exception(step_log.error)
+                span.set_status(trace.StatusCode.OK)
 
 
 class CustomSmolagentsInstrumentor(SmolagentsInstrumentor):
     """Add step-by-step tracing for smolagents"""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
 
     def _instrument(self, **kwargs):
         super()._instrument(**kwargs)
@@ -91,6 +99,32 @@ class CustomSmolagentsInstrumentor(SmolagentsInstrumentor):
             wrapper=_GeneratorStepWrapper(tracer=self._tracer, is_planning_step=True),
         )
 
+        if isinstance(self.model, MLXModel):
+            self._original_mlxmodel_stream_generate = self.model.stream_generate
+            def custom_mlx_stream_generate(*args, **kwargs):
+                with self._tracer.start_as_current_span(
+                    f"{MLXModel.__name__}.stream_generate",
+                    attributes={
+                        OPENINFERENCE_SPAN_KIND: LLM,
+                    },
+                ) as span:
+                    first_item_ts = None
+                    last_item = None
+                    try:
+                        for item in self._original_mlxmodel_stream_generate(*args, **kwargs):
+                            if first_item_ts is None:
+                                first_item_ts = time.time_ns()
+                            last_item = item
+                            yield item
+                    finally:
+                        if last_item is not None:
+                            span.set_attribute("prefill_tps", last_item.prompt_tps)
+                            span.set_attribute("generation_tps", last_item.generation_tps)
+                            span.set_attribute("first_token_ts", first_item_ts)
+                        span.set_status(trace.StatusCode.OK)
+
+            self.model.stream_generate = custom_mlx_stream_generate
+
     def _uninstrument(self, **kwargs):
         super()._uninstrument(**kwargs)
         if self._original_execute_step is not None:
@@ -102,6 +136,10 @@ class CustomSmolagentsInstrumentor(SmolagentsInstrumentor):
                 MultiStepAgent, "_execute_step", self._original_generate_planning_step
             )
             self._original_generate_planning_step = None
+
+        if self._original_mlxmodel_stream_generate is not None:
+            self.model = self._original_mlxmodel_stream_generate
+            self._original_mlxmodel_stream_generate = None
 
 
 class SmolAgent(WebAgent):
@@ -141,7 +179,7 @@ class SmolAgent(WebAgent):
 
     def get_instrumentor(self):
         if self.instrumentor is None:
-            self.instrumentor = CustomSmolagentsInstrumentor()
+            self.instrumentor = CustomSmolagentsInstrumentor(self.model)
         return self.instrumentor
 
     def run(self, prompt):

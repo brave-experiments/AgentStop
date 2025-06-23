@@ -19,7 +19,10 @@ from pathlib import Path
 SEC_TO_NANOSEC = 1_000_000_000
 GB_TO_BYTE = 1024 * 1024 * 1024
 
+TRACE_KIND_FIELD = "openinference.span.kind"
+LLM = "LLM"
 POWER_LOG_TYPE_MAC = "mac"
+FIRST_TOKEN_TS = "first_token_ts"
 
 class Analyzer:
     def __init__(
@@ -177,6 +180,8 @@ Write your short description here:
                 for child in children:
                     id_to_level[child] = level + 1
                 queue.extend(children)
+
+        id_to_trace = {t["span_id"]: t for t in self.agent_trace}
         
         start_time = self.glances_df["timestamp"].iloc[0]
 
@@ -186,21 +191,52 @@ Write your short description here:
                 continue
 
             attributes = t["attributes"]
-            kind = attributes["openinference.span.kind"]
+            kind = attributes[TRACE_KIND_FIELD]
             desc = None
+            extra_data = {}
 
-            if kind == "LLM":
+            if kind == LLM:
+                # Skip processing child LLM span
+                parent_id = t["parent_span_id"]
+                if parent_id is not None:
+                    parent_attr = id_to_trace[parent_id]["attributes"]
+                    if parent_attr[TRACE_KIND_FIELD] == LLM:
+                        continue
+
+                # Copy attributes from child LLM span (if any)
+                for child_id in id_to_child_id[t["span_id"]]:
+                    child_attr = id_to_trace[child_id]["attributes"]
+                    if child_attr[TRACE_KIND_FIELD] == LLM:
+                        for k, v in child_attr.items():
+                            if k not in attributes:
+                                attributes[k] = v
+
+                # Create description text for span
                 agent_desc = ""
                 token_desc = ""
-
                 output_msg = attributes.get("output.value", None)
                 input_tokens = attributes.get("llm.token_count.prompt", None)
                 output_tokens = attributes.get("llm.token_count.completion", None)
+                prefill_tps = attributes.get("prefill_tps", None)
+                generation_tps = attributes.get("generation_tps", None)
+                
                 if output_msg is not None:
                     agent_desc = self.describe_agent_action(output_msg)
                 if input_tokens is not None and output_tokens is not None:
                     token_desc = f"Tkn: {input_tokens} in, {output_tokens} out"
+                if prefill_tps is not None and generation_tps is not None:
+                    prefill_tps = round(prefill_tps, 1)
+                    generation_tps = round(generation_tps, 1)
+                    desc_str = f"{prefill_tps}/s pf, {generation_tps}/s gn"
+                    if len(token_desc) > 0:
+                        token_desc += f", {desc_str}"
+                    else:
+                        token_desc = f"Tkn: {desc_str}"
                 desc = f"{agent_desc}\n({token_desc})"
+
+                # Add extra data
+                if FIRST_TOKEN_TS in attributes:
+                    extra_data[FIRST_TOKEN_TS] = (attributes[FIRST_TOKEN_TS] - start_time) / SEC_TO_NANOSEC
             
             elif kind == "TOOL":
                 if "search" in t["name"].lower():
@@ -221,6 +257,7 @@ Write your short description here:
                 "end_time": (t["end_time"] - start_time) / SEC_TO_NANOSEC,
                 "kind": kind,
                 "desc": desc.strip() if desc is not None else "",
+                "extra_data": extra_data,
             }
             processed.append(span)
 
@@ -377,12 +414,12 @@ Write your short description here:
         ax.set_ylim(-spacing, level_positions[-1] + spacing)
         ax.set_yticks(level_positions)
         other_label = "Other"
-        ax.set_yticklabels([other_label, "LLM", "Tool"], rotation=60, va="center")
+        ax.set_yticklabels([other_label, LLM, "Tool"], rotation=60, va="center")
         ax.tick_params(axis="y", pad=0)
         ax.set_ylabel("Execution Type")
         type_to_level = {
             other_label: 0,
-            "LLM": 1,
+            LLM: 1,
             "TOOL": 2,
         }
 
@@ -401,7 +438,7 @@ Write your short description here:
         }
         grouped_agent_trace = [
             sorted([t for t in agent_trace if t["kind"] == kind], key=lambda t: t["start_time"])
-            for kind in ["LLM", "TOOL"]
+            for kind in [LLM, "TOOL"]
         ]
         grouped_agent_trace.append([custom_init_trace, custom_end_trace])
         for level_group in grouped_agent_trace:
@@ -410,18 +447,21 @@ Write your short description here:
                 t_start = t["start_time"]
                 t_end = t["end_time"]
                 kind = t["kind"]
+                extra_data = t.get("extra_data", None)
                 desc = t.get("desc", None)
 
                 duration = max(t_end - t_start, 0.2)
                 y_pos = level_positions[type_to_level[kind]]
                 color = stage_to_color[stage]
+                vline_start = y_pos - bar_height / 2 + 0.001
+                vline_end = y_pos + bar_height / 2
                 
                 # Draw the bar
                 ax.barh(y_pos, duration, left=t_start, height=bar_height, color=color, edgecolor=None)
 
                 # Draw border
                 if i > 0 and (t_start - level_group[i-1]["end_time"]) < 0.1:
-                    ax.vlines(t_start, y_pos - bar_height / 2 + 0.001, y_pos + bar_height / 2, color='black', linewidth=0.5)
+                    ax.vlines(t_start, vline_start, vline_end, color="black", linewidth=0.5)
 
                 # Draw stage name inside bar if the bar is long enough
                 bar_center = (t_start + t_end) / 2
@@ -434,7 +474,7 @@ Write your short description here:
 
                 # Draw extra annotation text outside of bar:
                 if desc is not None and len(desc) > 0:
-                    if kind == "LLM":
+                    if kind == LLM:
                         text = self.wrap_text_to_axis_width(ax, desc, t_start, t_start + duration, fontsize=6)
                         ax.text(bar_center, y_pos - bar_height, text, ha="center", va="top", fontsize=6)
                     elif kind == "TOOL":
@@ -448,7 +488,12 @@ Write your short description here:
         if other_axes is not None:
             for axis in other_axes + [ax]:
                 for t in [custom_init_trace] + agent_trace + [custom_end_trace]:
-                    axis.axvspan(t["start_time"], t["end_time"], color=stage_to_color[t["name"]], alpha=0.2, zorder=999)
+                    if t["kind"] == LLM and FIRST_TOKEN_TS in t["extra_data"]:
+                        mid_ts = t["extra_data"][FIRST_TOKEN_TS]
+                        axis.axvspan(t["start_time"], mid_ts, color=stage_to_color[t["name"]], alpha=0.2, zorder=999)
+                        axis.axvspan(mid_ts, t["end_time"], color=stage_to_color[t["name"]], alpha=0.2, hatch="\\", zorder=999)
+                    else:
+                        axis.axvspan(t["start_time"], t["end_time"], color=stage_to_color[t["name"]], alpha=0.2, zorder=999)
 
         ax.set_xlim(-custom_end_trace["end_time"] * 0.01, custom_end_trace["end_time"] * 1.01)
 
