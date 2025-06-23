@@ -262,8 +262,8 @@ class Profiler:
             self.stop_glances()
             self.save_glances_log()
             return True
-        except Exception as e:
-            print(f"Error during monitoring: {e}")
+        except BaseException as e:
+            print(f"BaseException: {e}")
             if self.power_output_path is not None:
                 self.stop_power_measurement()
             self.stop_glances()
