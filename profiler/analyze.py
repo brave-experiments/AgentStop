@@ -40,6 +40,7 @@ class Analyzer:
         with Path(agent_trace_path).open("r", encoding="utf-8") as f:
             self.agent_trace = json.load(f)
         
+        self.power_df = None
         if power_log_path is not None:
             self.power_log_type = power_log_type
             if power_log_type == POWER_LOG_TYPE_MAC:
@@ -101,7 +102,6 @@ class Analyzer:
         data = [{
             "timestamp": l["timestamp"],
             "elapsed_ns": l["elapsed_ns"],
-            "thermal_pressure": l["thermal_pressure"],
             "cpu_energy": l["processor"]["cpu_energy"],
             "cpu_power": l["processor"]["cpu_power"],
             "gpu_energy": l["processor"]["gpu_energy"],
@@ -756,29 +756,44 @@ Write your short description here:
             second_metrics_power=False,
         )
 
-
     def analyze(self):
         print("Processing glances...")
         self.process_glances_log()
         print("Processing trace...")
         self.process_agent_trace()
-
-        # self.plot_gpu_metrics()
-        # self.plot_cpu_metrics()
-        # self.plot_cpu_and_gpu_metrics()
-        # self.plot_mem_metrics()
-        # self.plot_diskio_metrics()
-        # self.plot_concurrency_metrics()
-        # self.plot_temp_metrics()
-        # self.plot_battery_metrics()
-
         if self.power_log is not None:
             print("Processing power...")
             self.process_power_log()
+
+        self.plot_gpu_metrics()
+        self.plot_cpu_metrics()
+        self.plot_cpu_and_gpu_metrics()
+        self.plot_mem_metrics()
+        self.plot_diskio_metrics()
+        self.plot_concurrency_metrics()
+        self.plot_temp_metrics()
+        self.plot_battery_metrics()
+
+        if self.power_df is not None:
             self.plot_power_metrics()
             self.plot_power_and_temp_metrics()
             self.plot_power_and_battery_metrics()
+
+        self.summarize_stats()
     
+    def summarize_stats(self):
+        print("*** Summary ***")
+        print(f"Peak GPU memory: {self.glances_df['gpu_mem_plot'].max()} GB")
+        print(f"Peak RAM: {self.glances_df['processes_mem_plot'].max()} GB")
+        print(f"Peak GPU temp: {self.glances_df['gpu_temp'].max()} C")
+        print(f"Peak CPU temp: {self.glances_df['smctemp_cpu'].max()} C")
+        print(f"Battery temp: {self.glances_df['battery_temp'].max()} C")
+        print(f"Battery charge drop: {self.glances_df['battery_percent'].max() - self.glances_df['battery_percent'].min()} %")
+
+        if self.power_df is not None:
+            time_diff = self.power_df["elapsed_ns"] / SEC_TO_NANOSEC / 3600
+            total_energy = self.power_df["combined_power"] * time_diff
+            print(f"Total energy spent: {total_energy.sum()} mWh")
 
 if __name__ == "__main__":
     example_text = """
