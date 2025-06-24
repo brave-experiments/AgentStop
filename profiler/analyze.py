@@ -230,20 +230,22 @@ Write your short description here:
             extra_data = {}
 
             if kind == LLM:
-                # Skip processing child LLM span
+                is_parent_of_LLM = False
+                # Copy attributes from parent LLM span
                 parent_id = t["parent_span_id"]
                 if parent_id is not None:
                     parent_attr = id_to_trace[parent_id]["attributes"]
                     if parent_attr[TRACE_KIND_FIELD] == LLM:
-                        continue
+                        for k, v in parent_attr.items():
+                            if k not in attributes:
+                                attributes[k] = v
 
-                # Copy attributes from child LLM span (if any)
+                # Check if parent of LLM to save some work
                 for child_id in id_to_child_id[t["span_id"]]:
                     child_attr = id_to_trace[child_id]["attributes"]
                     if child_attr[TRACE_KIND_FIELD] == LLM:
-                        for k, v in child_attr.items():
-                            if k not in attributes:
-                                attributes[k] = v
+                        is_parent_of_LLM = True
+                        break
 
                 # Create description text for span
                 agent_desc = ""
@@ -254,7 +256,7 @@ Write your short description here:
                 prefill_tps = attributes.get("prefill_tps", None)
                 generation_tps = attributes.get("generation_tps", None)
                 
-                if output_msg is not None:
+                if output_msg is not None and not is_parent_of_LLM:
                     agent_desc = self.describe_agent_action(output_msg)
                 if input_tokens is not None and output_tokens is not None:
                     token_desc = f"Tkn: {input_tokens} in, {output_tokens} out"
@@ -304,6 +306,10 @@ Write your short description here:
         i = 0
         while i < len(spans):
             top = spans[i]
+            if i == len(spans) - 1:
+                top_spans.append(top)
+                break
+
             for j in range(i + 1, len(spans)):
                 cur = spans[j]
                 if cur["start_time"] >= top["end_time"]: # Not overlapping
@@ -453,6 +459,7 @@ Write your short description here:
         ax.set_ylabel("Execution Type")
         type_to_level = {
             other_label: 0,
+            "CHAIN": 0,
             LLM: 1,
             "TOOL": 2,
         }
@@ -472,7 +479,7 @@ Write your short description here:
         }
         grouped_agent_trace = [
             sorted([t for t in agent_trace if t["kind"] == kind], key=lambda t: t["start_time"])
-            for kind in [LLM, "TOOL"]
+            for kind in [LLM, "TOOL", "CHAIN"]
         ]
         grouped_agent_trace.append([custom_init_trace, custom_end_trace])
         for level_group in grouped_agent_trace:
@@ -782,6 +789,7 @@ Write your short description here:
             print("Processing power...")
             self.process_power_log()
 
+        print("Plotting")
         self.plot_gpu_metrics()
         self.plot_cpu_metrics()
         self.plot_cpu_and_gpu_metrics()
@@ -805,7 +813,7 @@ Write your short description here:
         print(f"Peak RAM: {self.glances_df['processes_mem_plot'].max()} GB")
         print(f"Peak GPU temp: {self.glances_df['gpu_temp'].max()} C")
         print(f"Peak CPU temp: {self.glances_df['smctemp_cpu'].max()} C")
-        print(f"Battery temp: {self.glances_df['battery_temp'].max()} C")
+        print(f"Peak battery temp: {self.glances_df['battery_temp'].max()} C")
         print(f"Battery charge drop: {self.glances_df['battery_percent'].max() - self.glances_df['battery_percent'].min()} %")
 
         if self.power_df is not None:

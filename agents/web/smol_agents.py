@@ -76,9 +76,10 @@ class _GeneratorStepWrapper:
 class CustomSmolagentsInstrumentor(SmolagentsInstrumentor):
     """Add step-by-step tracing for smolagents"""
 
-    def __init__(self, model):
+    def __init__(self, model, add_pause=False):
         super().__init__()
         self.model = model
+        self.add_pause = add_pause
 
     def _instrument(self, **kwargs):
         super()._instrument(**kwargs)
@@ -102,6 +103,15 @@ class CustomSmolagentsInstrumentor(SmolagentsInstrumentor):
         if isinstance(self.model, MLXModel):
             self._original_mlxmodel_stream_generate = self.model.stream_generate
             def custom_mlx_stream_generate(*args, **kwargs):
+                if self.add_pause:
+                    with self._tracer.start_as_current_span(
+                        "Pause",
+                        attributes={
+                            OPENINFERENCE_SPAN_KIND: CHAIN,
+                        },
+                    ) as span:
+                        time.sleep(5)
+                        span.set_status(trace.StatusCode.OK)
                 with self._tracer.start_as_current_span(
                     f"{MLXModel.__name__}.stream_generate",
                     attributes={
