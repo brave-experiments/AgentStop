@@ -703,7 +703,7 @@ Write your short description here:
 
     def plot_temp_and_fan_metrics(self):
         self.plot_metrics(
-            "temp",
+            "temp_and_fan",
             title="CPU/GPU/Battery Temperature and Fan Speed Over Time",
             y_axis_label="Celcius",
             metrics=[
