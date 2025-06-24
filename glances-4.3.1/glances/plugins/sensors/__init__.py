@@ -24,10 +24,12 @@ from glances.plugins.sensors.sensor.glances_batpercent import PluginModel as Bat
 from glances.plugins.sensors.sensor.glances_hddtemp import PluginModel as HddTempPluginModel
 from glances.timer import Counter
 
+from psutil._common import shwtemp, sfan
+
 # Define all kind of sensors available in Glances
 sensors_definition = {
     'cpu_temp': {'type': 'temperature_core', 'unit': 'C'},
-    'fan_speed': {'type': 'fan_speed', 'unit': 'R'},
+    'fan_speed': {'type': 'fan_speed', 'unit': 'RPM'},
     'hdd_temp': {'type': 'temperature_hdd', 'unit': 'C'},
     'battery': {'type': 'battery', 'unit': '%'},
 }
@@ -334,12 +336,13 @@ class GlancesGrabSensors:
             logger.debug(f"Cannot grab {self.sensor_type}. Platform not supported.")
 
     def __fetch_data(self) -> dict[str, list]:
+        os_name = platform.system()
+
         if self.sensor_type == sensors_definition.get('cpu_temp').get('type'):
             # Solve an issue #1203 concerning a RunTimeError warning message displayed
             # in the curses interface.
             warnings.filterwarnings("ignore")
 
-            os_name = platform.system()
             if os_name == "Linux":
                 # psutil>=5.1.0, Linux-only
                 return psutil.sensors_temperatures()
@@ -347,15 +350,29 @@ class GlancesGrabSensors:
                 try:
                     temp = subprocess.check_output(["smctemp", "-c", "-i20", "-n4"], text=True, stderr=subprocess.DEVNULL)
                     temp = float(temp.strip())
-                    return {"apple": [psutil._common.shwtemp("smctemp", temp, None, None)]}
+                    return {"apple": [shwtemp("smctemp", temp, None, None)]}
                 except:
                     return {}
             else:
                 return {}
 
         if self.sensor_type == sensors_definition.get('fan_speed').get('type'):
-            # psutil>=5.2.0, Linux-only
-            return psutil.sensors_fans()
+            if os_name == "Linux":
+                # psutil>=5.2.0, Linux-only
+                return psutil.sensors_fans()
+            elif os_name == "Darwin":
+                try:
+                    res = subprocess.check_output(["istats", "fan", "speed", "--no-graphs", "--no-labels"], text=True, stderr=subprocess.DEVNULL)
+                    fan_speed = []
+                    for i, line in enumerate(res.split("\n")):
+                        if "RPM" not in line:
+                            break
+                        fan_speed.append(sfan(f"Fan {i}", int(line.split("RPM")[0].strip())))
+                    return {"apple": fan_speed}
+                except:
+                    return {}
+            else:
+                return {}
 
         raise ValueError(f"Unsupported sensor: {self.sensor_type}")
 

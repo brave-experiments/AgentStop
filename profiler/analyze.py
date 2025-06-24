@@ -70,6 +70,7 @@ class Analyzer:
             "battery_percent": next((s["value"] for s in l["sensors"] if s["label"] == "Battery"), 0),
             "battery_discharge": next((-min(s["value"], 0) for s in l["sensors"] if s["label"] == "Battery Current"), 0),
             "battery_temp": next(((s["value"] / 10 - 273.15) for s in l["sensors"] if s["label"] == "Battery Virtual Temperature"), 0),
+            "fan_max_speed": max(s["value"] for s in l["sensors"] if s["label"].startswith("Fan")),
             "processes_count": len(l["processlist"]),
             "processes_cpu_pct": sum(p["cpu_percent"] for p in l["processlist"]),
             "processes_num_threads": sum(p["num_threads"] for p in l["processlist"]),
@@ -693,6 +694,22 @@ Write your short description here:
             ],
         )
 
+    def plot_temp_and_fan_metrics(self):
+        self.plot_metrics(
+            "temp",
+            title="CPU/GPU/Battery Temperature and Fan Speed Over Time",
+            y_axis_label="Celcius",
+            metrics=[
+                ("smctemp_cpu", "CPU Temperature"),
+                ("gpu_temp", "GPU Temperature"),
+                ("battery_temp", "Battery Temperature"),
+            ],
+            second_y_axis_label="RPM",
+            second_metrics=[
+                ("fan_max_speed", "Fan Speed (max)", {"color": "brown"}),
+            ],
+        )
+
     def plot_battery_metrics(self):
         self.plot_metrics(
             "battery",
@@ -772,6 +789,7 @@ Write your short description here:
         self.plot_diskio_metrics()
         self.plot_concurrency_metrics()
         self.plot_temp_metrics()
+        self.plot_temp_and_fan_metrics()
         self.plot_battery_metrics()
 
         if self.power_df is not None:
