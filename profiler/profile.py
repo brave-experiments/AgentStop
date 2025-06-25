@@ -42,6 +42,7 @@ class Profiler:
 
         self.glances_process = None
         self.glances_tmp_file = None
+        self.power_process = None
         self.power_tmp_file = None
         self.target_process = None
         self.target_pids = set()  # Track PIDs created by the target script
@@ -117,10 +118,9 @@ class Profiler:
                 "powermetrics",
                 "--format", "plist",
                 "--sample-rate", str(self.frequency),
-                "--samplers", "cpu_power,gpu_power,thermal,tasks",
+                "--samplers", "cpu_power,gpu_power,thermal",
                 "--order", "pid",
-                "--output-file", self.power_tmp_file,
-                "--show-process-energy",
+                "--output-file", self.power_tmp_file
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -182,13 +182,17 @@ class Profiler:
         time.sleep(2)
 
     def stop_glances(self):
-        print("Stopping glances...")
-        self.stop_process(self.glances_process)
+        if self.glances_process is not None:
+            print("Stopping glances...")
+            self.stop_process(self.glances_process)
+            self.glances_process = None
         print("Glances stopped")
 
     def stop_power_measurement(self):
-        print("Stopping power measurement...")
-        self.stop_process(self.power_process)
+        if self.power_process is not None:
+            print("Stopping power measurement...")
+            self.stop_process(self.power_process)
+            self.power_process = None
         print("Power measurement stopped")
 
     def should_include_process(self, pid, name):
@@ -214,7 +218,7 @@ class Profiler:
         for l in logs:
             l["processlist"] = [
                 p for p in l["processlist"]
-                if self.should_include_process(p["pid"], p["cmdline"][0].lower())
+                if self.should_include_process(p["pid"], p["cmdline"][0])
             ]
         # Filter out logs that do not include target processes (excluding ollama)
         logs = [
@@ -224,7 +228,6 @@ class Profiler:
 
         # Save
         self.save_jsonl(logs, self.glances_output_path)
-        os.remove(self.glances_tmp_file)
         print(f"Glances log saved")
 
     def save_power_measurement(self):
@@ -239,16 +242,23 @@ class Profiler:
             data = f.read()
         logs = [plistlib.loads(d) for d in data.split(b'\x00')]
         for log in logs:
-            log["tasks"] = [
-                t for t in log.get("tasks", [])
-                if self.should_include_process(t["pid"], t["name"])
-            ]
             # Convert datetime object to Unix (ns) for JSON
-            log["timestamp"] = int(log["timestamp"].replace(tzinfo=timezone.utc).timestamp() * 1_000_000_000)
-        logs = [l for l in logs if len(l["tasks"]) > 0]
+            # Need to set timezone to UTC manually
+            fixed_ts = log["timestamp"].replace(tzinfo=timezone.utc).timestamp()
+            log["timestamp"] = int(fixed_ts * 1_000_000_000)
         self.save_jsonl(logs, self.power_output_path)
-        os.remove(self.power_tmp_file)
         print(f"Powermetrics log saved")
+
+    def cleanup(self):
+        self.stop_power_measurement()
+        self.stop_glances()
+        if self.glances_tmp_file is not None:
+            os.remove(self.glances_tmp_file)
+            self.glances_tmp_file = None
+        if self.power_tmp_file is not None:
+            os.remove(self.power_tmp_file)
+            self.power_tmp_file = None
+        
 
     def start_profiling(self):
         """Main method to run the complete monitoring process"""
@@ -260,18 +270,19 @@ class Profiler:
             self.start_target_script()
 
             # Stop
-            if self.power_output_path is not None:
-                self.stop_power_measurement()
-                self.save_power_measurement()
+            self.stop_power_measurement()
             self.stop_glances()
+
+            # Save
+            if self.power_output_path is not None:
+                self.save_power_measurement()
             self.save_glances_log()
             return True
         except BaseException as e:
             print(f"BaseException: {e}")
-            if self.power_output_path is not None:
-                self.stop_power_measurement()
-            self.stop_glances()
             return False
+        finally:
+            self.cleanup()
 
 
 def main():

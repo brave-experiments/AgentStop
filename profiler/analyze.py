@@ -99,30 +99,23 @@ class Analyzer:
     def process_power_log(self):
         if self.power_log_type != POWER_LOG_TYPE_MAC:
             raise NotImplemented("Only power log from macOS's powermetrics is supported for now")
+        if self.glances_df is None:
+            raise Exception("Needs processed glances to process power log")
 
-        data = [{
-            "timestamp": l["timestamp"],
-            "elapsed_ns": l["elapsed_ns"],
-            "cpu_energy": l["processor"]["cpu_energy"],
-            "cpu_power": l["processor"]["cpu_power"],
-            "gpu_energy": l["processor"]["gpu_energy"],
-            "gpu_power": l["processor"]["gpu_power"],
-            "combined_power": l["processor"]["combined_power"],
-            "all_processes_energy_impact": l["all_tasks"]["energy_impact"],
-            "processes_energy_impact": sum(p["energy_impact"] for p in l["tasks"]),
-            "processes_diskio_read_bytes": sum(p["diskio_bytesread"] for p in l["tasks"]),
-            "processes_diskio_write_bytes": sum(p["diskio_byteswritten"] for p in l["tasks"]),
-            "processes_diskio_read_bytes_per_sec": sum(p["diskio_bytesread_per_s"] for p in l["tasks"]),
-            "processes_diskio_write_bytes_per_sec": sum(p["diskio_byteswritten_per_s"] for p in l["tasks"]),
-            "processes_network_sent_bytes": sum(p["bytes_sent"] for p in l["tasks"]),
-            "processes_network_received_bytes": sum(p["bytes_received"] for p in l["tasks"]),
-            "processes_network_sent_bytes_per_sec": sum(p["bytes_sent_per_s"] for p in l["tasks"]),
-            "processes_network_received_bytes_per_sec": sum(p["bytes_received_per_s"] for p in l["tasks"]),
-            "processes_network_sent_packets": sum(p["packets_sent"] for p in l["tasks"]),
-            "processes_network_received_packets": sum(p["packets_received"] for p in l["tasks"]),
-            "processes_network_sent_packets_per_sec": sum(p["packets_sent_per_s"] for p in l["tasks"]),
-            "processes_network_received_packets_per_sec": sum(p["packets_received_per_s"] for p in l["tasks"]),
-        } for l in self.power_log]
+        glances_start_time = self.glances_df["timestamp"].iloc[0]
+        glances_end_time = self.glances_df["timestamp"].iloc[-1]
+        data = [
+            {
+                "timestamp": l["timestamp"],
+                "elapsed_ns": l["elapsed_ns"],
+                "cpu_energy": l["processor"]["cpu_energy"],
+                "cpu_power": l["processor"]["cpu_power"],
+                "gpu_energy": l["processor"]["gpu_energy"],
+                "gpu_power": l["processor"]["gpu_power"],
+                "combined_power": l["processor"]["combined_power"],
+            } for l in self.power_log
+            if glances_start_time <= l["timestamp"] <= glances_end_time
+        ]
         df = pd.DataFrame.from_dict(data)
 
         # Need to better approximate timestamps since the precision from powermetrics is 1 sec
@@ -713,7 +706,7 @@ Write your short description here:
             ],
             second_y_axis_label="RPM",
             second_metrics=[
-                ("fan_max_speed", "Fan Speed (max)", {"color": "brown"}),
+                ("fan_max_speed", "Fan Speed (max)", {"color": "brown", "linestyle": "--"}),
             ],
         )
 
@@ -730,19 +723,13 @@ Write your short description here:
     def plot_power_metrics(self):
         self.plot_metrics(
             "power",
-            title="CPU/GPU Power and Process Energy Impact Over Time",
+            title="CPU and GPU Power Over Time",
             y_axis_label="mW",
             metrics=[
                 ("cpu_power", "CPU Power"),
                 ("gpu_power", "GPU Power"),
-                ("combined_power", "Combined Power"),
             ],
             power=True,
-            second_y_axis_label="Energy Impact Score",
-            second_metrics=[
-                ("all_processes_energy_impact", "Energy Impact", {"color": "grey"}),
-            ],
-            second_metrics_power=True,
         )
 
     def plot_power_and_temp_metrics(self):
