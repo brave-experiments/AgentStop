@@ -757,8 +757,8 @@ Write your short description here:
             power=True,
             second_y_axis_label="Temperature (Celcius)",
             second_metrics=[
-                ("smctemp_cpu", "CPU Temperature", {"linestyle": "-", "color": "green"}),
-                ("gpu_temp", "GPU Temperature", {"linestyle": "-", "color": "brown"}),
+                ("smctemp_cpu", "CPU Temperature", {"linestyle": "--", "color": "green"}),
+                ("gpu_temp", "GPU Temperature", {"linestyle": "--", "color": "brown"}),
             ],
             second_metrics_power=False,
         )
@@ -808,18 +808,21 @@ Write your short description here:
         self.summarize_stats()
     
     def summarize_stats(self):
-        print("*** Summary ***")
-        print(f"Peak GPU memory: {self.glances_df['gpu_mem_plot'].max()} GB")
-        print(f"Peak RAM: {self.glances_df['processes_mem_plot'].max()} GB")
-        print(f"Peak GPU temp: {self.glances_df['gpu_temp'].max()} C")
-        print(f"Peak CPU temp: {self.glances_df['smctemp_cpu'].max()} C")
-        print(f"Peak battery temp: {self.glances_df['battery_temp'].max()} C")
-        print(f"Battery charge drop: {self.glances_df['battery_percent'].max() - self.glances_df['battery_percent'].min()} %")
-
+        text = f"""Peak GPU memory: {self.glances_df['gpu_mem_plot'].max()} GB
+Peak RAM: {self.glances_df['processes_mem_plot'].max()} GB
+Peak GPU temp: {self.glances_df['gpu_temp'].max()} C
+Peak CPU temp: {self.glances_df['smctemp_cpu'].max()} C
+Peak battery temp: {self.glances_df['battery_temp'].max()} C
+Battery charge drop: {self.glances_df['battery_percent'].max() - self.glances_df['battery_percent'].min()} %"""
         if self.power_df is not None:
             time_diff = self.power_df["elapsed_ns"] / SEC_TO_NANOSEC / 3600
             total_energy = self.power_df["combined_power"] * time_diff
-            print(f"Total energy spent: {total_energy.sum()} mWh")
+            text += f"\nTotal energy spent: {total_energy.sum()} mWh"
+        
+        print("*** Summary ***")
+        print(text)
+        with open(f"{self.output_dir}/summary.txt", "w") as f:
+            f.write(text)
 
 if __name__ == "__main__":
     example_text = """

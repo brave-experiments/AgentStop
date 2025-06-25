@@ -3,17 +3,19 @@ import json
 import os
 import time
 
+from dataclasses import asdict, is_dataclass
 from dotenv import load_dotenv
 from openinference.instrumentation import get_attributes_from_context
 from openinference.instrumentation.helpers import safe_json_dumps
 from openinference.instrumentation.smolagents import SmolagentsInstrumentor
 from openinference.instrumentation.smolagents._wrappers import (
-    OPENINFERENCE_SPAN_KIND,
     CHAIN,
     INPUT_VALUE,
     LLM,
+    OPENINFERENCE_SPAN_KIND,
     OUTPUT_VALUE,
     _get_input_value,
+    _ModelWrapper,
 )
 from opentelemetry import trace
 from smolagents import (
@@ -26,15 +28,16 @@ from smolagents import (
     WebSearchTool,
 )
 from smolagents.memory import PlanningStep
+from smolagents.models import agglomerate_stream_deltas
 from typing import Any, Callable, Mapping, Tuple
 from utils import WebAgent, get_custom_arg_parser
 from wrapt import wrap_function_wrapper
 
 
 class _GeneratorStepWrapper:
-    def __init__(self, tracer, is_planning_step=False):
+    """Wrap each step of a generator in its own span"""
+    def __init__(self, tracer):
         self._tracer = tracer
-        self._is_planning_step = is_planning_step
 
     def __call__(
         self,
@@ -43,64 +46,93 @@ class _GeneratorStepWrapper:
         args: Tuple[Any, ...],
         kwargs: Mapping[str, Any],
     ) -> Any:
-        span_name = (
-            PlanningStep.__name__
-            if self._is_planning_step
-            else args[0].__class__.__name__
-        )
+        generator = wrapped(*args, **kwargs)
+        ended = False
+        while not ended:
+            with self._tracer.start_as_current_span(
+                "Step",
+                attributes={OPENINFERENCE_SPAN_KIND: CHAIN},
+            ) as span:
+                try:
+                    item = next(generator)
+                    yield item
+                    span.update_name(f"{item.__class__.__name__}")
+                    output_val = None
+                    if is_dataclass(item):
+                        output_val = item.dict() if hasattr(item, "dict") else asdict(item)
+                    span.set_attribute(OUTPUT_VALUE, safe_json_dumps(output_val))
+                except StopIteration:
+                    ended = True
+                    span.set_attribute("generator_ended", True)
+                finally:
+                    span.set_status(trace.StatusCode.OK)
+
+
+class _SmolAgentModelGenerateWrapper:
+    """Replace generate to use generate_stream internally to get token-level data"""
+    def __init__(self, tracer):
+        self._tracer = tracer
+
+    def __call__(
+        self,
+        wrapped: Callable[..., Any], # This is never used
+        instance: Any,
+        args: Tuple[Any, ...],
+        kwargs: Mapping[str, Any],
+    ) -> Any:
         with self._tracer.start_as_current_span(
-            span_name,
+            f"{instance.__class__.__name__}.generate_stream",
             attributes={
-                OPENINFERENCE_SPAN_KIND: CHAIN,
-                INPUT_VALUE: _get_input_value(wrapped, *args, **kwargs),
-                **dict(get_attributes_from_context()),
+                OPENINFERENCE_SPAN_KIND: LLM,
             },
         ) as span:
-            try:
-                last_item = None
-                for item in wrapped(*args, **kwargs):
-                    yield item
-                    last_item = item
-            finally:
-                if self._is_planning_step:
-                    assert isinstance(last_item, PlanningStep)
-                    span.set_attribute(OUTPUT_VALUE, safe_json_dumps(last_item.dict()))
-                else:
-                    step_log = args[0]  # ActionStep
-                    span.set_attribute(OUTPUT_VALUE, safe_json_dumps(step_log.dict()))
-                    if step_log.error is not None:
-                        span.record_exception(step_log.error)
-                span.set_status(trace.StatusCode.OK)
+            gen_stream = instance.generate_stream(*args, **kwargs)
+            deltas = []
+            prefill_tps = None
+            generation_tps = None
+            first_item_ts = None
+            tic = time.perf_counter()
+            
+            for delta in gen_stream:
+                if first_item_ts is None:
+                    prefill_time = time.perf_counter() - tic
+                    first_item_ts = time.time_ns()
+                    tic = time.perf_counter()
+                deltas.append(delta)
+            
+            generation_time = time.perf_counter() - tic
+            chat_msg = agglomerate_stream_deltas(deltas)
+            prefill_tps = chat_msg.token_usage.input_tokens / prefill_time
+            generation_tps = chat_msg.token_usage.output_tokens / generation_time
+
+            span.set_attribute("prefill_tps", prefill_tps)
+            span.set_attribute("generation_tps", generation_tps)
+            span.set_attribute("first_token_ts", first_item_ts)
+            span.set_status(trace.StatusCode.OK)
+                    
+            return chat_msg
 
 
 class CustomSmolagentsInstrumentor(SmolagentsInstrumentor):
     """Add step-by-step tracing for smolagents"""
 
-    def __init__(self, model, add_pause=False):
+    def __init__(self, model, stream=False, add_pause=False):
         super().__init__()
         self.model = model
+        self.stream = stream
         self.add_pause = add_pause
 
     def _instrument(self, **kwargs):
         super()._instrument(**kwargs)
 
-        self._original_execute_step = getattr(MultiStepAgent, "_execute_step", None)
+        self._original_run_stream = getattr(MultiStepAgent, "_run_stream", None)
         wrap_function_wrapper(
             module="smolagents",
-            name=f"{MultiStepAgent.__name__}._execute_step",
+            name=f"{MultiStepAgent.__name__}._run_stream",
             wrapper=_GeneratorStepWrapper(tracer=self._tracer),
         )
 
-        self._original_generate_planning_step = getattr(
-            MultiStepAgent, "_generate_planning_step", None
-        )
-        wrap_function_wrapper(
-            module="smolagents",
-            name=f"{MultiStepAgent.__name__}._generate_planning_step",
-            wrapper=_GeneratorStepWrapper(tracer=self._tracer, is_planning_step=True),
-        )
-
-        if isinstance(self.model, MLXModel):
+        if isinstance(self.model, MLXModel): # MLX is always streaming
             self._original_mlxmodel_stream_generate = self.model.stream_generate
             def custom_mlx_stream_generate(*args, **kwargs):
                 if self.add_pause:
@@ -134,22 +166,37 @@ class CustomSmolagentsInstrumentor(SmolagentsInstrumentor):
                         span.set_status(trace.StatusCode.OK)
 
             self.model.stream_generate = custom_mlx_stream_generate
+        elif self.stream and isinstance(self.model, LiteLLMModel):
+            # Undo super's wrap
+            setattr(LiteLLMModel, "generate", self._original_model_generate_methods[LiteLLMModel])
+            
+            # Wrap our replacement
+            wrap_function_wrapper(
+                module="smolagents",
+                name=f"{LiteLLMModel.__name__}.generate",
+                wrapper=_SmolAgentModelGenerateWrapper(tracer=self._tracer),
+            )
+
+            # Redo the super's wrap
+            wrap_function_wrapper(
+                module="smolagents",
+                name=f"{LiteLLMModel.__name__}.generate",
+                wrapper=_ModelWrapper(tracer=self._tracer),
+            )
+
 
     def _uninstrument(self, **kwargs):
         super()._uninstrument(**kwargs)
-        if self._original_execute_step is not None:
-            setattr(MultiStepAgent, "_execute_step", self._original_execute_step)
-            self._original_execute_step = None
-
-        if self._original_generate_planning_step is not None:
-            setattr(
-                MultiStepAgent, "_execute_step", self._original_generate_planning_step
-            )
-            self._original_generate_planning_step = None
+        if self._original_run_stream is not None:
+            setattr(MultiStepAgent, "_run_stream", self._original_run_stream)
+            self._original_run_stream = None
 
         if self._original_mlxmodel_stream_generate is not None:
             self.model = self._original_mlxmodel_stream_generate
             self._original_mlxmodel_stream_generate = None
+
+        if self._original_model_generate_methods is not None:
+            setattr(LiteLLMModel, "generate", self._original_model_generate_methods[LiteLLMModel])
 
 
 class SmolAgent(WebAgent):
@@ -157,24 +204,33 @@ class SmolAgent(WebAgent):
         self,
         model_id,
         model_type,
+        stream=False,
         max_tokens=20000,
         planning_interval=None,
         api_key=None,
+        **kwargs,
     ):
-        super().__init__("SmolAgents")
-        if model_type == "mlx":  # For Apple silicon
+        super().__init__("SmolAgents", model_id, model_type, stream=stream, **kwargs)
+        if model_type == "mlx":
+            # MLX is customized for Apple silicon
+            # Default is greedy sampling
             self.model = MLXModel(
                 model_id=model_id,
                 trust_remote_code=True,
                 max_tokens=max_tokens,
             )
         elif model_type == "litellm":
-            self.model = LiteLLMModel(model_id=model_id, api_key=api_key)
+            self.model = LiteLLMModel(
+                model_id=model_id,
+                api_key=api_key,
+                max_tokens=max_tokens,
+                temperature=0.0,
+            )
         else:
             raise NotImplemented(f"{model_type} is not supported.")
 
         self.search_agent = ToolCallingAgent(
-            tools=[WebSearchTool(), VisitWebpageTool()],
+            tools=[WebSearchTool()],
             model=self.model,
             name="search_agent",
             description="This is an agent that can do web search.",
@@ -189,7 +245,7 @@ class SmolAgent(WebAgent):
 
     def get_instrumentor(self):
         if self.instrumentor is None:
-            self.instrumentor = CustomSmolagentsInstrumentor(self.model)
+            self.instrumentor = CustomSmolagentsInstrumentor(self.model, self.stream)
         return self.instrumentor
 
     def run(self, prompt):
@@ -209,13 +265,21 @@ python smol_agents.py \\
 --trace_path ./trace.json \\
 --prompt "If the US keeps its 2024 growth rate, how many years will it take for the GDP to double?"
 
-Run with a LiteLLM model:
+Run with Anthropic via LiteLLM:
 python smol_agents.py \\
 --model_id anthropic/claude-sonnet-4-20250514 \\
 --model_type litellm \\
 --trace_path ./trace.json \\
 --prompt "Summarize the US Constitution." \\
 --api_key_env ENV_FIELD_FOR_YOUR_API_KEY
+
+Run with Ollama via LiteLLM with streaming:
+python smol_agents.py \\
+--model_id ollama_chat/qwen2.5-coder:32b \\
+--model_type litellm \\
+--stream \\
+--trace_path ./trace.json \\
+--prompt "Summarize the US Constitution."
 """
 
     parser = get_custom_arg_parser(description="Run a SmolAgent with tracing.", example_text=example_text)
@@ -227,6 +291,7 @@ python smol_agents.py \\
     agent = SmolAgent(
         model_id=args.model_id,
         model_type=args.model_type,
+        stream=args.stream,
         api_key=os.getenv(args.api_key_env) if args.api_key_env is not None else None,
     )
     if args.trace_path is not None:

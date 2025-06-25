@@ -210,13 +210,17 @@ class Profiler:
             for line in f:
                 logs.append(json.loads(line.strip()))
 
-        # Filter
+        # Filter out processes that are not relevant
         for l in logs:
             l["processlist"] = [
                 p for p in l["processlist"]
                 if self.should_include_process(p["pid"], p["cmdline"][0].lower())
             ]
-        logs = [l for l in logs if len(l["processlist"]) > 0]
+        # Filter out logs that do not include target processes (excluding ollama)
+        logs = [
+            l for l in logs
+            if any([p["pid"] in self.target_pids for p in l["processlist"]])
+        ]
 
         # Save
         self.save_jsonl(logs, self.glances_output_path)
@@ -315,8 +319,9 @@ python profile.py \\
     parser.add_argument("--glances_output_path", type=str, default=None, help="Path to save the glances log in JSONL.")
     parser.add_argument("--power_output_path", type=str, default=None, help="Path to save the processed power profile log in JSONL format.")
     parser.add_argument("--frequency", type=int, default=1000, help="Samples resource metrics every <frequency> milliseconds")
-    parser.add_argument("--capture_stdout", action=argparse.BooleanOptionalAction, help="Whether to print the output of the agent to stdout.")
-    parser.add_argument("--include_ollama", action=argparse.BooleanOptionalAction, help="Whether to include Ollama in the profiling.")
+    parser.add_argument("--capture_stdout", action=argparse.BooleanOptionalAction, help="Print the output of the agent to stdout.")
+    parser.add_argument("--include_ollama", action=argparse.BooleanOptionalAction, help="Include Ollama in the profiling.")
+    parser.add_argument("--stream", action=argparse.BooleanOptionalAction, help="Enable streaming.")
 
     args = parser.parse_args()
 
@@ -327,11 +332,15 @@ python profile.py \\
     script_args = [
         ("--model_id", args.model_id),
         ("--model_type", args.model_type),
+        ("--stream" if args.stream else "--no-stream",),
         ("--prompt", args.prompt),
         ("--trace_path", args.trace_path),
         ("--api_key_env", args.api_key_env),
     ]
-    script_args = [a for arg in script_args for a in arg if arg[1] is not None]
+    script_args = [
+        a for arg in script_args for a in arg
+        if len(arg) == 1 or arg[1] is not None
+    ]
 
     profiler = Profiler(
         args.script,

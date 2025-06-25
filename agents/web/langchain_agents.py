@@ -9,11 +9,20 @@ from openinference.instrumentation.langchain import LangChainInstrumentor
 from utils import WebAgent, get_custom_arg_parser
 
 class LangChainAgent(WebAgent):
-    def __init__(self, model_id, model_type="ollama", max_tokens=20000, api_key=None):
-        super().__init__("LangChain")
+    def __init__(
+        self,
+        model_id,
+        model_type="ollama",
+        stream=False,
+        max_tokens=20000,
+        api_key=None,
+        **kwargs,
+    ):
+        super().__init__("LangChain", model_id, model_type, stream=stream, **kwargs)
 
         if model_type == "ollama":
-            model = ChatOllama(model=model_id, num_predict=max_tokens)
+             # num_predict=-2 means fill the context window
+            model = ChatOllama(model=model_id, num_ctx=max_tokens, num_predict=-2)
         elif model_type == "anthropic":
             model = ChatAnthropic(model=model_id, max_tokens=max_tokens)
         else:
@@ -23,11 +32,14 @@ class LangChainAgent(WebAgent):
         self.agent = create_react_agent(model, tools)
 
     def run(self, prompt):
-        for step in self.agent.stream(
-            {"messages": [HumanMessage(content=prompt)]},
-            stream_mode="values",
-        ):
-            step["messages"][-1].pretty_print()
+        if not self.stream:
+            for step in self.agent.stream(
+                {"messages": [HumanMessage(content=prompt)]},
+                stream_mode="values",
+            ):
+                step["messages"][-1].pretty_print()
+        else:
+            pass
 
     def get_instrumentor(self):
         if self.instrumentor is None:
@@ -62,6 +74,7 @@ python langchain_agents.py \\
     agent = LangChainAgent(
         model_id=args.model_id,
         model_type=args.model_type,
+        stream=args.stream,
         api_key=os.getenv(args.api_key_env) if args.api_key_env is not None else None,
     )
     if args.trace_path is not None:

@@ -5,6 +5,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.sdk.resources import Resource
+from pathlib import Path
 
 
 class JsonSpanExporter(InMemorySpanExporter):
@@ -44,13 +45,26 @@ class JsonSpanExporter(InMemorySpanExporter):
             }
             spans.append(span_dict)
 
-        with open(self.file_path, "w") as f:
+        path = Path(self.file_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as f:
             json.dump(spans, f, indent=2, default=str)
 
 
 class WebAgent:
-    def __init__(self, name, *args, **kwargs):
+    def __init__(
+        self,
+        name,
+        model_id,
+        model_type,
+        *args,
+        stream=False,
+        **kwargs
+    ):
         self.name = name
+        self.model_id = model_id
+        self.model_type = model_type
+        self.stream = stream
         self.instrumentor = None
 
     def get_instrumentor(self):
@@ -86,6 +100,7 @@ def get_custom_arg_parser(description, example_text):
     parser.add_argument("--model_id", type=str, required=True, help="Model ID to use.")
     parser.add_argument("--model_type", type=str, required=True, help="Type of the model backend.")
     parser.add_argument("--prompt", type=str, required=True, help="Prompt to give to the agent.")
+    parser.add_argument("--stream", action=argparse.BooleanOptionalAction, help="Enable streaming.")
     parser.add_argument("--trace_path", type=str, default=None, help="Path to save the JSON trace.")
     parser.add_argument("--api_key_env", type=str, default=None, help="Optional .env's field for the model API key.")
 
