@@ -5,6 +5,7 @@ System performance profiling using glances.
 
 import argparse
 import json
+import ollama
 import os
 import platform
 import plistlib
@@ -30,6 +31,7 @@ class Profiler:
         frequency=1000, # ms
         capture_stdout=False,
         include_ollama=False,
+        model_id=None,
     ):
         self.target_script = target_script
         self.args = args
@@ -39,6 +41,10 @@ class Profiler:
         self.frequency = frequency
         self.capture_stdout = capture_stdout
         self.include_ollama = include_ollama
+        self.model_id = model_id
+
+        if self.include_ollama and self.model_id is None:
+            raise Exception("Model ID must be specified if Ollama is included.")
 
         self.glances_process = None
         self.glances_tmp_file = None
@@ -74,6 +80,40 @@ class Profiler:
 
         self.monitoring_thread = threading.Thread(target=monitor_processes, daemon=True)
         self.monitoring_thread.start()
+
+    def terminate_ollama(self):
+        # Stops all ollama processes
+        print("Attempting to terminate any running Ollama processes...")
+        for proc in psutil.process_iter(["pid", "name"]):
+            try:
+                if "ollama" in proc.info["name"]:
+                    print(f"Terminating Ollama process {proc.info['pid']}")
+                    proc.send_signal(signal.SIGINT)
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+            except Exception as e:
+                print(f"Exception occurred when terminating {proc.pid}: {e}")
+                continue
+
+    def start_ollama(self):
+        print("Starting Ollama...")
+        subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(3)
+        model_id = self.model_id.split("/")[-1]
+        print(f"Preloading model {model_id}...")
+        ollama.generate(
+            model=model_id,
+            prompt=" ",
+            # messages=[{"role": "user", "content": " "}],
+            options={"temperature": 0.0, "num_predict": 1},
+        )
+        print("Ollama started and preloaded.")
 
     def start_glances(self):
         """Start glances with json export"""
@@ -220,11 +260,15 @@ class Profiler:
                 p for p in l["processlist"]
                 if self.should_include_process(p["pid"], p["cmdline"][0])
             ]
-        # Filter out logs that do not include target processes (excluding ollama)
-        logs = [
-            l for l in logs
-            if any([p["pid"] in self.target_pids for p in l["processlist"]])
-        ]
+        # Filter out logs that do not include target processes and Ollama
+        logs = [l for l in logs if len(l["processlist"]) > 0]
+        valid_len = len(logs)
+        # We don't need Ollama after the target script ends
+        for l in reversed(logs):
+            if any([p["pid"] in self.target_pids for p in l["processlist"]]):
+                break
+            valid_len -= 1
+        logs = logs[:valid_len]
 
         # Save
         self.save_jsonl(logs, self.glances_output_path)
@@ -258,15 +302,21 @@ class Profiler:
         if self.power_tmp_file is not None:
             os.remove(self.power_tmp_file)
             self.power_tmp_file = None
+        if self.include_ollama:
+            self.terminate_ollama()
         
 
     def start_profiling(self):
         """Main method to run the complete monitoring process"""
         try:
             # Start
+            if self.include_ollama:
+                self.terminate_ollama()
             self.start_glances()
             if self.power_output_path is not None:
                 self.start_power_measurement()
+            if self.include_ollama:
+                self.start_ollama()
             self.start_target_script()
 
             # Stop
@@ -362,6 +412,7 @@ python profile.py \\
         frequency=args.frequency,
         capture_stdout=args.capture_stdout,
         include_ollama=args.include_ollama,
+        model_id=args.model_id,
     )
     success = profiler.start_profiling()
     if success:

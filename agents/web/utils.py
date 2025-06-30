@@ -66,6 +66,8 @@ class WebAgent:
         self.model_type = model_type
         self.stream = stream
         self.instrumentor = None
+        self.args = args
+        self.kwargs = kwargs
 
     def get_instrumentor(self):
         raise NotImplemented("You need to implement this method.")

@@ -276,6 +276,12 @@ Write your short description here:
                             desc = input_value.get("query", None)
                             if desc is None and "kwargs" in input_value:
                                 desc = input_value["kwargs"].get("query", None)
+                            if desc is None and "args" in input_value:
+                                args = input_value["args"]
+                                if type(args) is str:
+                                    desc = args
+                                elif type(args) is list and len(args) > 0:
+                                    desc = args[0]
                         except:
                             pass
             
@@ -795,12 +801,15 @@ Write your short description here:
         self.summarize_stats()
     
     def summarize_stats(self):
-        text = f"""Peak GPU memory: {self.glances_df['gpu_mem_plot'].max()} GB
+        ts = self.glances_df["timestamp_plot"]
+        time_spent = ts.iloc[-1] - ts.iloc[0]
+        text = f"""Time elapsed: {time_spent} seconds
+Peak GPU memory: {self.glances_df['gpu_mem_plot'].max()} GB
 Peak RAM: {self.glances_df['processes_mem_plot'].max()} GB
 Peak GPU temp: {self.glances_df['gpu_temp'].max()} C
 Peak CPU temp: {self.glances_df['smctemp_cpu'].max()} C
 Peak battery temp: {self.glances_df['battery_temp'].max()} C
-Battery charge drop: {self.glances_df['battery_percent'].max() - self.glances_df['battery_percent'].min()} %"""
+Battery charge drop: {np.ptp(self.glances_df['battery_percent'])} %"""
         if self.power_df is not None:
             time_diff = self.power_df["elapsed_ns"] / SEC_TO_NANOSEC / 3600
             total_energy = self.power_df["combined_power"] * time_diff

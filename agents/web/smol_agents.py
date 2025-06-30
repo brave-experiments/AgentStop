@@ -2,9 +2,11 @@ import argparse
 import json
 import os
 import time
+import torch
 
 from dataclasses import asdict, is_dataclass
 from dotenv import load_dotenv
+from llmlingua import PromptCompressor
 from openinference.instrumentation import get_attributes_from_context
 from openinference.instrumentation.helpers import safe_json_dumps
 from openinference.instrumentation.smolagents import SmolagentsInstrumentor
@@ -23,6 +25,7 @@ from smolagents import (
     LiteLLMModel,
     MLXModel,
     MultiStepAgent,
+    Tool,
     ToolCallingAgent,
     VisitWebpageTool,
     WebSearchTool,
@@ -199,18 +202,21 @@ class CustomSmolagentsInstrumentor(SmolagentsInstrumentor):
             setattr(LiteLLMModel, "generate", self._original_model_generate_methods[LiteLLMModel])
 
 
-class SmolAgent(WebAgent):
+class BasicSmolAgent(WebAgent):
     def __init__(
         self,
+        model_name,
         model_id,
         model_type,
         stream=False,
-        max_tokens=20000,
-        planning_interval=None,
         api_key=None,
         **kwargs,
     ):
-        super().__init__("SmolAgents", model_id, model_type, stream=stream, **kwargs)
+        super().__init__(model_name, model_id, model_type, stream=stream, **kwargs)
+        self.init_model(model_id, model_type, api_key=api_key)
+        self.init_agent()
+        
+    def init_model(self, model_id, model_type, api_key=None, max_tokens=20000):
         if model_type == "mlx":
             # MLX is customized for Apple silicon
             # Default is greedy sampling
@@ -229,6 +235,7 @@ class SmolAgent(WebAgent):
         else:
             raise NotImplemented(f"{model_type} is not supported.")
 
+    def init_agent(self):
         self.search_agent = ToolCallingAgent(
             tools=[WebSearchTool()],
             model=self.model,
@@ -240,7 +247,6 @@ class SmolAgent(WebAgent):
             tools=[],
             model=self.model,
             managed_agents=[self.search_agent],
-            planning_interval=planning_interval,
         )
 
     def get_instrumentor(self):
@@ -250,6 +256,76 @@ class SmolAgent(WebAgent):
 
     def run(self, prompt):
         self.agent.run(prompt)
+
+
+class TextCompressionTool(Tool):
+    name = "text_compression"
+    description = "Compresses texts like web search results and returns a string for the compressed text."
+    inputs = {"text": {"type": "string", "description": "The text to compress."}}
+    output_type = "string"
+
+    def __init__(
+        self,
+        model_name="microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
+        device=None,
+        compression_ratio=0.7,
+    ):
+        super().__init__()
+        if device is None:
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
+        self.compressor = PromptCompressor(
+            model_name=model_name,
+            device_map=device,
+            use_llmlingua2=True
+        )
+        self.compression_ratio = compression_ratio
+
+    def forward(self, text):
+        res = self.compressor.compress_prompt(
+            text,
+            rate=self.compression_ratio,
+            force_tokens=['#', '\n', ',', '.', '-', '?'],
+            force_reserve_digit=True,
+            drop_consecutive=True,
+        )
+        return res["compressed_prompt"]
+
+
+class WebSearchCompressTool(WebSearchTool):
+    name = "web_search"
+    description = "Performs a web search for a query and returns a string of the top search results formatted as markdown with titles and descriptions."
+    inputs = {"query": {"type": "string", "description": "The search query to perform."}}
+    output_type = "string"
+
+    def __init__(self, compression_ratio=0.7):
+        super().__init__()
+        self.compress_tool = TextCompressionTool(compression_ratio=compression_ratio)
+
+    def forward(self, query):
+        results = self.search(query)
+        if len(results) == 0:
+            raise Exception("No results found! Try a less restrictive/shorter query.")
+        res = "## Search Results\n\n" + "\n\n".join([
+            f"{r['title']}\n{self.compress_tool.forward(r['description'])}"
+            for r in results
+        ])
+        return res
+
+
+class SmolAgentWithCompression(BasicSmolAgent):
+    def __init__(self, *args, **kwargs):
+        super().__init__("SmolAgentWithCompression", *args, **kwargs)
+        
+    def init_agent(self):
+        self.agent = CodeAgent(
+            tools=[WebSearchCompressTool(compression_ratio=0.5)],
+            model=self.model,
+        )
 
 
 if __name__ == "__main__":
@@ -288,7 +364,7 @@ python smol_agents.py \\
     )
     args = parser.parse_args()
 
-    agent = SmolAgent(
+    agent = SmolAgentWithCompression(
         model_id=args.model_id,
         model_type=args.model_type,
         stream=args.stream,
