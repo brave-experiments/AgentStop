@@ -33,7 +33,9 @@ class Analyzer:
         power_log_type=None,
         model_id=None, # LLM model for analyzing
         full_execution=False,
-        output_dir="./analysis_logs", output_ext=["png"],
+        output_dir="./analysis_logs",
+        output_ext=["png"],
+        display_plots=False,
     ):
         with Path(glances_log_path).open("r", encoding="utf-8") as f:
             self.glances_log = [json.loads(l) for l in f if l.strip()]
@@ -57,6 +59,7 @@ class Analyzer:
         self.output_dir = output_dir
         self.output_ext = output_ext
         self.full_execution = full_execution
+        self.display_plots = display_plots
 
     def process_glances_log(self):
         data = [{
@@ -69,7 +72,7 @@ class Analyzer:
             "smctemp_cpu": next((s["value"] for s in l["sensors"] if s["label"] == "smctemp"), 0),
             "battery_percent": next((s["value"] for s in l["sensors"] if s["label"] == "Battery"), 0),
             "battery_discharge": next((-min(s["value"], 0) for s in l["sensors"] if s["label"] == "Battery Current"), 0),
-            "battery_temp": next(((s["value"] / 10 - 273.15) for s in l["sensors"] if s["label"] == "Battery Virtual Temperature"), 0),
+            "battery_temp": next(((s["value"] / 10 - 273.15) for s in l["sensors"] if s["label"] == "Battery Temperature"), 0),
             "fan_max_speed": max(s["value"] for s in l["sensors"] if s["label"].startswith("Fan")),
             "processes_count": len(l["processlist"]),
             "processes_cpu_pct": sum(p["cpu_percent"] for p in l["processlist"]),
@@ -622,7 +625,9 @@ Write your short description here:
                 plt.savefig(f"{self.output_dir}/{save_name}.{ext}", dpi=300)
             else:
                 plt.savefig(f"{self.output_dir}/{save_name}.{ext}")
-        plt.show()
+        
+        if self.display_plots:
+            plt.show()
 
     def plot_gpu_metrics(self):
         self.plot_metrics(
@@ -772,6 +777,123 @@ Write your short description here:
             ],
             second_metrics_power=False,
         )
+    
+    def summarize_stats(self):
+        df = self.glances_df
+        ts = df["timestamp_plot"]
+        stats = {
+            "duration_sec": ts.iloc[-1] - ts.iloc[0],
+            "peak_gpu_mem_gb": df["gpu_mem_plot"].max(),
+            "peak_ram_gb": df["processes_mem_plot"].max(),
+            "peak_gpu_temp_celcius": df["gpu_temp"].max(),
+            "peak_cpu_temp_celcius": df["smctemp_cpu"].max(),
+            "peak_battery_temp_celcius": df["battery_temp"].max(),
+            "battery_charge_drop_pct": np.ptp(df["battery_percent"]),
+        }
+
+        if self.power_df is not None:
+            time_diff = self.power_df["elapsed_ns"] / SEC_TO_NANOSEC / 3600
+            cpu_energy = self.power_df["cpu_power"] * time_diff
+            gpu_energy = self.power_df["gpu_power"] * time_diff
+            total_energy = self.power_df["combined_power"] * time_diff
+            
+            stats["cpu_energy_spent_mWh"] = cpu_energy.sum()
+            stats["gpu_energy_spent_mWh"] = gpu_energy.sum()
+            stats["total_energy_spent_mWh"] = total_energy.sum()
+
+        for k, v in stats.items():
+            if type(v) is np.int64:
+                stats[k] = int(v)
+        
+        print("*** Summary ***")
+        stats_txt = json.dumps(stats, indent=4)
+        print(stats_txt)
+        with open(f"{self.output_dir}/summary.txt", "w") as f:
+            f.write(stats_txt)
+
+    def summarize_stats_per_step(self):
+        agent_trace = self.get_sorted_topmost_spans()
+        stats = []
+
+        for step in agent_trace:
+            start_time, end_time = step["start_time"], step["end_time"]
+            start_end = [(start_time, end_time, None)]
+
+            if step["kind"] == LLM and FIRST_TOKEN_TS in step["extra_data"]:
+                first_token_ts = step["extra_data"][FIRST_TOKEN_TS]
+                start_end.extend([
+                    (start_time, first_token_ts, "prefill"),
+                    (first_token_ts, end_time, "generation"),
+                ])
+
+            stat = {
+                "step_name": step["name"],
+                "kind": step["kind"],
+                "start_time": step["start_time"],
+                "end_time": step["end_time"],
+                "desc": step["desc"],
+            }
+
+            for (start_time, end_time, label) in start_end:
+                df = self.glances_df
+                ts = df["timestamp_plot"]
+                df = df[(ts >= start_time) & (ts < end_time)]
+                prefix = (f"{label}_" if label is not None else "")
+                
+                metrics = [
+                    ("duration_sec", end_time - start_time),
+                    ("avg_processes_cpu_pct", df["processes_cpu_pct"].mean()),
+                    ("avg_ram_gb", df["processes_mem_plot"].mean()),
+                    ("avg_gpu_usage_pct", df["gpu_usage"].mean()),
+                    ("avg_gpu_mem_gb", df["gpu_mem_plot"].mean()),
+                    ("avg_gpu_temp_celcius", df["gpu_temp"].mean()),
+                    ("avg_cpu_temp_celcius", df["smctemp_cpu"].mean()),
+                    ("avg_battery_temp_celcius", df["battery_temp"].mean()),
+                ]
+
+                if self.power_df is not None:
+                    power_df = self.power_df
+                    ts = power_df["timestamp_plot"]
+                    power_df = power_df[(ts >= start_time) & (ts < end_time)]
+                    time_diff = power_df["elapsed_ns"] / SEC_TO_NANOSEC / 3600
+                    cpu_power = power_df["cpu_power"]
+                    gpu_power = power_df["gpu_power"]
+                    combined_power = power_df["combined_power"]
+                    
+                    cpu_energy = cpu_power * time_diff
+                    gpu_energy = gpu_power * time_diff
+                    total_energy = combined_power * time_diff
+                    
+                    metrics.extend([
+                        ("avg_cpu_power_mW", cpu_power.mean()),
+                        ("med_cpu_power_mW", cpu_power.median()),
+                        ("std_cpu_power_mW", cpu_power.std()),
+                        ("avg_gpu_power_mW", gpu_power.mean()),
+                        ("med_gpu_power_mW", gpu_power.median()),
+                        ("std_gpu_power_mW", gpu_power.std()),
+                        ("avg_combined_power_mW", combined_power.mean()),
+                        ("med_combined_power_mW", combined_power.median()),
+                        ("std_combined_power_mW", combined_power.std()),
+                        ("cpu_energy_spent_mWh", cpu_energy.sum()),
+                        ("gpu_energy_spent_mWh", gpu_energy.sum()),
+                        ("total_energy_spent_mWh", total_energy.sum()),
+                    ])
+                
+                for (k, v) in metrics:
+                    stat[prefix + k] = v
+
+            stats.append(stat)
+
+        for stat in stats:
+            for k, v in stat.items():
+                if type(v) is np.int64:
+                    stat[k] = int(v)
+
+        print("*** Step-by-step summary ***")
+        stats_txt = json.dumps(stats, indent=4)
+        print(stats_txt)
+        with open(f"{self.output_dir}/step_summary.txt", "w") as f:
+            f.write(stats_txt)
 
     def analyze(self):
         print("Processing glances...")
@@ -782,7 +904,7 @@ Write your short description here:
             print("Processing power...")
             self.process_power_log()
 
-        print("Plotting")
+        print("Plotting...")
         self.plot_gpu_metrics()
         self.plot_cpu_metrics()
         self.plot_cpu_and_gpu_metrics()
@@ -799,26 +921,7 @@ Write your short description here:
             self.plot_power_and_battery_metrics()
 
         self.summarize_stats()
-    
-    def summarize_stats(self):
-        ts = self.glances_df["timestamp_plot"]
-        time_spent = ts.iloc[-1] - ts.iloc[0]
-        text = f"""Time elapsed: {time_spent} seconds
-Peak GPU memory: {self.glances_df['gpu_mem_plot'].max()} GB
-Peak RAM: {self.glances_df['processes_mem_plot'].max()} GB
-Peak GPU temp: {self.glances_df['gpu_temp'].max()} C
-Peak CPU temp: {self.glances_df['smctemp_cpu'].max()} C
-Peak battery temp: {self.glances_df['battery_temp'].max()} C
-Battery charge drop: {np.ptp(self.glances_df['battery_percent'])} %"""
-        if self.power_df is not None:
-            time_diff = self.power_df["elapsed_ns"] / SEC_TO_NANOSEC / 3600
-            total_energy = self.power_df["combined_power"] * time_diff
-            text += f"\nTotal energy spent: {total_energy.sum()} mWh"
-        
-        print("*** Summary ***")
-        print(text)
-        with open(f"{self.output_dir}/summary.txt", "w") as f:
-            f.write(text)
+        self.summarize_stats_per_step()
 
 if __name__ == "__main__":
     example_text = """
@@ -851,6 +954,7 @@ python analyze.py \\
     parser.add_argument("--full_execution", action=argparse.BooleanOptionalAction, help="Whether to print all agent's execution steps.")
     parser.add_argument("--output_dir", type=str, required=True, help="Path to the directory to write analyses, figures, etc.")
     parser.add_argument("--output_ext", type=str, nargs="+", choices=["png", "pdf", "svg"], default=["png"], help="File type for saving (e.g., png, pdf, svg).")
+    parser.add_argument("--display_plots", action=argparse.BooleanOptionalAction, help="Whether to display the plots.")
 
     args = parser.parse_args()
 
@@ -863,5 +967,6 @@ python analyze.py \\
         full_execution=args.full_execution,
         output_dir=args.output_dir,
         output_ext=args.output_ext,
+        display_plots=args.display_plots,
     )
     analyzer.analyze()
