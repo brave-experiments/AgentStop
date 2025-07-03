@@ -16,6 +16,7 @@ import sys
 import threading
 import tempfile
 import time
+import traceback
 from datetime import timezone
 from pathlib import Path
 
@@ -86,13 +87,9 @@ class Profiler:
         print("Attempting to terminate any running Ollama processes...")
         for proc in psutil.process_iter(["pid", "name"]):
             try:
-                if "ollama" in proc.info["name"]:
+                if "ollama" in proc.info["name"].lower():
                     print(f"Terminating Ollama process {proc.info['pid']}")
-                    proc.send_signal(signal.SIGINT)
-                    try:
-                        proc.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
+                    self.stop_process(proc)
             except Exception as e:
                 print(f"Exception occurred when terminating {proc.pid}: {e}")
                 continue
@@ -258,7 +255,8 @@ class Profiler:
         for l in logs:
             l["processlist"] = [
                 p for p in l["processlist"]
-                if self.should_include_process(p["pid"], p["cmdline"][0])
+                if self.should_include_process(p["pid"], p["name"])
+                and p["status"] != "Z" # Zombie
             ]
         # Filter out logs that do not include target processes and Ollama
         logs = [l for l in logs if len(l["processlist"]) > 0]
@@ -294,6 +292,7 @@ class Profiler:
         print(f"Powermetrics log saved")
 
     def cleanup(self):
+        print("Cleaning up...")
         self.stop_power_measurement()
         self.stop_glances()
         if self.glances_tmp_file is not None:
@@ -329,7 +328,8 @@ class Profiler:
             self.save_glances_log()
             return True
         except BaseException as e:
-            print(f"BaseException: {e}")
+            print(f"Caught an Exception: {e}")
+            traceback.print_exc()
             return False
         finally:
             self.cleanup()
@@ -341,7 +341,7 @@ Examples:
 
 python profile.py \\
 --script ../agents/web/smol_agents.py \\
---model_id mlx-community/Qwen2.5-Coder-32B-Instruct-4bit \\
+--model_id mlx-community/Qwen3-32B-4bit \\
 --model_type mlx \\
 --prompt "What is the meaning of 42?" \\
 --trace_path ./logs/smolagent_trace.json \\
@@ -353,7 +353,7 @@ python profile.py \\
 
 python profile.py \\
 --script ../agents/web/langchain_agents.py \\
---model_id qwen2.5-coder:32b \\
+--model_id qwen3:32b \\
 --model_type ollama \\
 --prompt "What is the meaning of 42?" \\
 --trace_path ./logs/langchain_trace.json \\

@@ -1,8 +1,10 @@
 import argparse
 import json
+import importlib.resources
 import os
 import time
 import torch
+import yaml
 
 from dataclasses import asdict, is_dataclass
 from dotenv import load_dotenv
@@ -145,7 +147,7 @@ class CustomSmolagentsInstrumentor(SmolagentsInstrumentor):
                             OPENINFERENCE_SPAN_KIND: CHAIN,
                         },
                     ) as span:
-                        time.sleep(5)
+                        time.sleep(90)
                         span.set_status(trace.StatusCode.OK)
                 with self._tracer.start_as_current_span(
                     f"{MLXModel.__name__}.stream_generate",
@@ -210,13 +212,22 @@ class BasicSmolAgent(WebAgent):
         model_type,
         stream=False,
         api_key=None,
+        thinking=False,
         **kwargs,
     ):
         super().__init__(model_name, model_id, model_type, stream=stream, **kwargs)
-        self.init_model(model_id, model_type, api_key=api_key)
+        self.thinking = thinking
+        self.init_model(model_id, model_type, api_key=api_key, thinking=thinking)
         self.init_agent()
         
-    def init_model(self, model_id, model_type, api_key=None, max_tokens=20000):
+    def init_model(
+        self,
+        model_id,
+        model_type,
+        api_key=None,
+        max_tokens=20000,
+        thinking=False,
+    ):
         if model_type == "mlx":
             # MLX is customized for Apple silicon
             # Default is greedy sampling
@@ -224,6 +235,9 @@ class BasicSmolAgent(WebAgent):
                 model_id=model_id,
                 trust_remote_code=True,
                 max_tokens=max_tokens,
+                apply_chat_template_kwargs={
+                    "enable_thinking": thinking,
+                },
             )
         elif model_type == "litellm":
             self.model = LiteLLMModel(
@@ -231,6 +245,7 @@ class BasicSmolAgent(WebAgent):
                 api_key=api_key,
                 max_tokens=max_tokens,
                 temperature=0.0,
+                think=thinking,
             )
         else:
             raise NotImplemented(f"{model_type} is not supported.")
@@ -251,7 +266,11 @@ class BasicSmolAgent(WebAgent):
 
     def get_instrumentor(self):
         if self.instrumentor is None:
-            self.instrumentor = CustomSmolagentsInstrumentor(self.model, self.stream)
+            self.instrumentor = CustomSmolagentsInstrumentor(
+                self.model,
+                self.stream,
+                # add_pause=True,
+            )
         return self.instrumentor
 
     def run(self, prompt):
@@ -322,9 +341,20 @@ class SmolAgentWithCompression(BasicSmolAgent):
         super().__init__("SmolAgentWithCompression", *args, **kwargs)
         
     def init_agent(self):
+        prompt_templates = None
+        if (
+            self.model_type == "litellm" and
+            self.model_id.startswith("ollama_chat/qwen3") and
+            not self.thinking
+        ):
+            prompt_templates = yaml.safe_load(
+                importlib.resources.files("smolagents.prompts").joinpath("code_agent.yaml").read_text()
+            )
+            prompt_templates["system_prompt"] = "/no_think " + prompt_templates["system_prompt"]
         self.agent = CodeAgent(
             tools=[WebSearchCompressTool(compression_ratio=0.5)],
             model=self.model,
+            prompt_templates=prompt_templates,
         )
 
 
@@ -336,7 +366,7 @@ Examples:
 
 Run with an MLX model:
 python smol_agents.py \\
---model_id mlx-community/Qwen2.5-Coder-32B-Instruct-4bit \\
+--model_id mlx-community/Qwen3-32B-4bit \\
 --model_type mlx \\
 --trace_path ./trace.json \\
 --prompt "If the US keeps its 2024 growth rate, how many years will it take for the GDP to double?"
@@ -351,7 +381,7 @@ python smol_agents.py \\
 
 Run with Ollama via LiteLLM with streaming:
 python smol_agents.py \\
---model_id ollama_chat/qwen2.5-coder:32b \\
+--model_id ollama_chat/qwen3:32b \\
 --model_type litellm \\
 --stream \\
 --trace_path ./trace.json \\
@@ -368,6 +398,7 @@ python smol_agents.py \\
         model_id=args.model_id,
         model_type=args.model_type,
         stream=args.stream,
+        thinking=args.thinking,
         api_key=os.getenv(args.api_key_env) if args.api_key_env is not None else None,
     )
     if args.trace_path is not None:

@@ -74,10 +74,10 @@ class Analyzer:
             "battery_discharge": next((-min(s["value"], 0) for s in l["sensors"] if s["label"] == "Battery Current"), 0),
             "battery_temp": next(((s["value"] / 10 - 273.15) for s in l["sensors"] if s["label"] == "Battery Temperature"), 0),
             "fan_max_speed": max(s["value"] for s in l["sensors"] if s["label"].startswith("Fan")),
-            "processes_count": len(l["processlist"]),
-            "processes_cpu_pct": sum(p["cpu_percent"] for p in l["processlist"]),
-            "processes_num_threads": sum(p["num_threads"] for p in l["processlist"]),
-            "processes_mem": sum(p["memory_info"]["rss"] for p in l["processlist"]),
+            "processes_count": len([p for p in l["processlist"] if p["status"] != "Z"]),
+            "processes_cpu_pct": sum(p["cpu_percent"] for p in l["processlist"] if p["status"] != "Z"),
+            "processes_num_threads": sum(p["num_threads"] for p in l["processlist"] if p["status"] != "Z"),
+            "processes_mem": sum(p["memory_info"]["rss"] for p in l["processlist"] if p["status"] != "Z"),
             "memswap_used": l["memswap"]["used"],
             "diskio_read_bytes": sum(d["read_bytes"] for d in l["diskio"]),
             "diskio_write_bytes": sum(d["write_bytes"] for d in l["diskio"]),
@@ -186,7 +186,12 @@ Here's the message of the AI assistant:
 
 Write your short description here:
 """
-        res = ollama.generate(model=self.model_id, prompt=prompt, options={"temperature": 0.0})
+        res = ollama.generate(
+            model=self.model_id,
+            prompt=prompt,
+            think=False,
+            options={"temperature": 0.0},
+        )
         return res.response
 
     def process_agent_trace(self):
@@ -932,7 +937,7 @@ python analyze.py \\
 --agent_trace_path ./logs/smolagent_trace.json \\
 --power_log_path ./logs/smolagent_powermetrics.jsonl \\
 --power_log_type mac
---model_id qwen2.5-coder:32b \\
+--model_id qwen3:32b \\
 --output_dir ./analysis_logs \\
 --output_ext png pdf
 """

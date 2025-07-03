@@ -102,7 +102,8 @@ def get_custom_arg_parser(description, example_text):
     parser.add_argument("--model_id", type=str, required=True, help="Model ID to use.")
     parser.add_argument("--model_type", type=str, required=True, help="Type of the model backend.")
     parser.add_argument("--prompt", type=str, required=True, help="Prompt to give to the agent.")
-    parser.add_argument("--stream", action=argparse.BooleanOptionalAction, help="Enable streaming.")
+    parser.add_argument("--stream", action=argparse.BooleanOptionalAction, default=False, help="Enable streaming.")
+    parser.add_argument("--thinking", action=argparse.BooleanOptionalAction, default=False, help="Enable thinking.")
     parser.add_argument("--trace_path", type=str, default=None, help="Path to save the JSON trace.")
     parser.add_argument("--api_key_env", type=str, default=None, help="Optional .env's field for the model API key.")
 
