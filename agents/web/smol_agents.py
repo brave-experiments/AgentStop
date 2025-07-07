@@ -1,10 +1,8 @@
 import argparse
 import json
-import importlib.resources
 import os
 import time
 import torch
-import yaml
 
 from dataclasses import asdict, is_dataclass
 from dotenv import load_dotenv
@@ -35,7 +33,7 @@ from smolagents import (
 from smolagents.memory import PlanningStep
 from smolagents.models import agglomerate_stream_deltas
 from typing import Any, Callable, Mapping, Tuple
-from utils import WebAgent, get_custom_arg_parser
+from utils import WebAgent, get_custom_arg_parser, NO_THINK
 from wrapt import wrap_function_wrapper
 
 
@@ -321,19 +319,26 @@ class WebSearchCompressTool(WebSearchTool):
     inputs = {"query": {"type": "string", "description": "The search query to perform."}}
     output_type = "string"
 
-    def __init__(self, compression_ratio=0.7):
+    def __init__(self, compression_ratio=0.7, add_no_think=False):
         super().__init__()
         self.compress_tool = TextCompressionTool(compression_ratio=compression_ratio)
+        self.add_no_think = add_no_think
 
     def forward(self, query):
         results = self.search(query)
         if len(results) == 0:
-            raise Exception("No results found! Try a less restrictive/shorter query.")
+            msg = "No results found! Try a less restrictive/shorter query."
+            if self.add_no_think:
+                msg = f"{msg} {NO_THINK}"
+            raise Exception(msg)
         res = "## Search Results\n\n" + "\n\n".join([
             f"{r['title']}\n{self.compress_tool.forward(r['description'])}"
             for r in results
         ])
-        return res
+        if self.add_no_think:
+            return f"{res} {NO_THINK}"
+        else:
+            return res
 
 
 class SmolAgentWithCompression(BasicSmolAgent):
@@ -341,20 +346,24 @@ class SmolAgentWithCompression(BasicSmolAgent):
         super().__init__("SmolAgentWithCompression", *args, **kwargs)
         
     def init_agent(self):
-        prompt_templates = None
-        if (
+        instructions = None
+        add_no_think = (
             self.model_type == "litellm" and
             self.model_id.startswith("ollama_chat/qwen3") and
             not self.thinking
-        ):
-            prompt_templates = yaml.safe_load(
-                importlib.resources.files("smolagents.prompts").joinpath("code_agent.yaml").read_text()
-            )
-            prompt_templates["system_prompt"] = "/no_think " + prompt_templates["system_prompt"]
+        )
+        
+        if add_no_think:
+            instructions = NO_THINK
+        
+        custom_search_tool = WebSearchCompressTool(
+            compression_ratio=0.5,
+            add_no_think=add_no_think,
+        )
         self.agent = CodeAgent(
-            tools=[WebSearchCompressTool(compression_ratio=0.5)],
+            tools=[custom_search_tool],
             model=self.model,
-            prompt_templates=prompt_templates,
+            instructions=instructions,
         )
 
 

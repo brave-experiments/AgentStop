@@ -7,6 +7,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.sdk.resources import Resource
 from pathlib import Path
 
+NO_THINK = "/no_think"
 
 class JsonSpanExporter(InMemorySpanExporter):
     """Simple file-based span exporter that writes JSON traces to a file"""
