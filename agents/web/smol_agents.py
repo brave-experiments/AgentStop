@@ -210,12 +210,19 @@ class BasicSmolAgent(WebAgent):
         model_type,
         stream=False,
         api_key=None,
+        api_base=None,
         thinking=False,
         **kwargs,
     ):
         super().__init__(model_name, model_id, model_type, stream=stream, **kwargs)
         self.thinking = thinking
-        self.init_model(model_id, model_type, api_key=api_key, thinking=thinking)
+        self.init_model(
+            model_id,
+            model_type,
+            api_key=api_key,
+            api_base=api_base,
+            thinking=thinking
+        )
         self.init_agent()
         
     def init_model(
@@ -223,6 +230,7 @@ class BasicSmolAgent(WebAgent):
         model_id,
         model_type,
         api_key=None,
+        api_base=None,
         max_tokens=20000,
         thinking=False,
     ):
@@ -241,9 +249,9 @@ class BasicSmolAgent(WebAgent):
             self.model = LiteLLMModel(
                 model_id=model_id,
                 api_key=api_key,
+                api_base=api_base,
                 max_tokens=max_tokens,
                 temperature=0.0,
-                think=thinking,
             )
         else:
             raise NotImplemented(f"{model_type} is not supported.")
@@ -401,6 +409,7 @@ python smol_agents.py \\
     parser.add_argument(
         "--planning_interval", type=int, default=None, help="Planning interval."
     )
+    parser.add_argument("--api_base", type=str, default=None, help="API base for LiteLLM.")
     args = parser.parse_args()
 
     agent = SmolAgentWithCompression(
@@ -409,6 +418,7 @@ python smol_agents.py \\
         stream=args.stream,
         thinking=args.thinking,
         api_key=os.getenv(args.api_key_env) if args.api_key_env is not None else None,
+        api_base=args.api_base,
     )
     if args.trace_path is not None:
         agent.enable_tracing(args.trace_path)
