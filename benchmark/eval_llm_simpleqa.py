@@ -34,8 +34,8 @@ if __name__ == "__main__":
             res = ollama.generate(
                 model=model_id,
                 prompt=prompt,
-                think=True,
-                options={"temperature": 0.0, "num_predict": 4096},
+                think=False,
+                options={"temperature": 0.0, "num_predict": 1024},
             ).response
             if start_match in res and end_match in res:
                 parsed_result = res[res.find(start_match) + len(start_match):res.rfind(end_match)]
