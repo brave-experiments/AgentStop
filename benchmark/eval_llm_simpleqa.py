@@ -35,9 +35,8 @@ if __name__ == "__main__":
                 model=model_id,
                 prompt=prompt,
                 think=True,
-                options={"temperature": 0.0, "num_predict": 128},
+                options={"temperature": 0.0, "num_predict": 4096},
             ).response
-
             if start_match in res and end_match in res:
                 parsed_result = res[res.find(start_match) + len(start_match):res.rfind(end_match)]
                 answer.append(parsed_result.strip())
@@ -45,4 +44,4 @@ if __name__ == "__main__":
                 answer.append(None)
         
         df[model_id] = answer
-        df.to_csv("../data/llm_simpleqa_results.csv")
+        df.to_csv("../data/llm_simpleqa_results.csv", index=False)
