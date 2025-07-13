@@ -5,7 +5,6 @@ import subprocess
 import traceback
 
 from agents.web.smol_agents import FullSmolAgent
-from tqdm import tqdm
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -26,6 +25,8 @@ if __name__ == "__main__":
     compression_ratios = args.compression_ratio
 
     df = pd.read_csv(args.input_path)
+    problems = df["problem"].to_list()
+    targets = df["answer"].to_list()
 
     for model_id, compression_ratio in itertools.product(model_ids, compression_ratios):
         print(f"*** Evaluating smolagent {model_id} with compression ratio {compression_ratio} ***")
@@ -37,7 +38,8 @@ if __name__ == "__main__":
         )
         
         answer = []
-        for prob in tqdm(df["problem"].to_list()):
+        for i, prob in enumerate(problems):
+            print(f"\n*** Solving problem {i+1}/{len(problems)}  ***\n")
             try:
                 res = agent.run(prob, max_steps=10).to_string()
                 if "<think>" in res and "</think>" in res:
@@ -46,6 +48,8 @@ if __name__ == "__main__":
             except Exception as e:
                 print(traceback.format_exc())
                 answer.append(f"Exception: {e}")
+
+            print(f"\nTarget: {targets[i]} | Answer to problem {i+1}: {answer[-1]}\n")
         
         df[f"smolagent_{model_id}_compression_{compression_ratio}"] = answer
-        df.to_csv(args.output_path, index=False)
+        df.to_csv(args.output_path, index=False) 
