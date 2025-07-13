@@ -39,8 +39,10 @@ if __name__ == "__main__":
         answer = []
         for prob in tqdm(df["problem"].to_list()):
             try:
-                res = agent.run(prob, max_steps=10)
-                answer.append(res.to_string())
+                res = agent.run(prob, max_steps=10).to_string()
+                if "<think>" in res and "</think>" in res:
+                    res = res[res.rfind("</think>")+len("</think>"):]
+                answer.append(res.strip())
             except Exception as e:
                 print(traceback.format_exc())
                 answer.append(f"Exception: {e}")
