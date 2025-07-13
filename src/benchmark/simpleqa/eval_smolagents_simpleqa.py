@@ -24,11 +24,11 @@ if __name__ == "__main__":
     model_ids = args.model_id
     compression_ratios = args.compression_ratio
 
-    df = pd.read_csv(args.input_path)
+    df = pd.read_csv(args.input_path).sample(frac=1, random_state=47).reset_index(drop=True).head(200)
     problems = df["problem"].to_list()
     targets = df["answer"].to_list()
 
-    for model_id, compression_ratio in itertools.product(model_ids, compression_ratios):
+    for compression_ratio, model_id in itertools.product(compression_ratios, model_ids):
         print(f"*** Evaluating smolagent {model_id} with compression ratio {compression_ratio} ***")
 
         agent = FullSmolAgent(
