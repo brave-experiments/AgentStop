@@ -21,6 +21,7 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--model_id", type=str, nargs="+", required=True, help="Ollama model ID")
+    parser.add_argument("--output_path", type=str, required=True, help="Path for the output")
     args = parser.parse_args()
     model_ids = args.model_id
 
@@ -44,4 +45,4 @@ if __name__ == "__main__":
                 answer.append(None)
         
         df[model_id] = answer
-        df.to_csv("../data/llm_simpleqa_results.csv", index=False)
+        df.to_csv(args.output_path, index=False)

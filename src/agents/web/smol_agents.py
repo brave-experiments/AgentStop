@@ -44,9 +44,10 @@ from smolagents import (
 from smolagents.memory import PlanningStep
 from smolagents.models import agglomerate_stream_deltas
 from typing import Any, Callable, Mapping, Tuple
-from utils import WebAgent, get_custom_arg_parser, NO_THINK
+from agents.web.utils import WebAgent, get_custom_arg_parser, NO_THINK
 from wrapt import wrap_function_wrapper
 
+load_dotenv()
 
 class _GeneratorStepWrapper:
     """Wrap each step of a generator in its own span"""
@@ -323,6 +324,7 @@ class CustomApiWebSearchTool(CustomToolWithCompression, ApiWebSearchTool):
             )
         return results
 
+
 class CustomWikipediaSearchTool(CustomToolWithCompression, WikipediaSearchTool):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -453,8 +455,8 @@ class BasicSmolAgent(WebAgent):
             )
         return self.instrumentor
 
-    def run(self, prompt):
-        self.agent.run(prompt)
+    def run(self, prompt, *args, **kwargs):
+        return self.agent.run(prompt, *args, **kwargs)
 
 
 class SmolAgentWithCompression(BasicSmolAgent):
@@ -497,8 +499,6 @@ class FullSmolAgent(BasicSmolAgent):
 
 
 if __name__ == "__main__":
-    load_dotenv()
-
     example_text = """
 Examples:
 

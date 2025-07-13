@@ -6,7 +6,7 @@ from langchain_core.messages import HumanMessage
 from langchain_ollama import ChatOllama
 from langgraph.prebuilt import create_react_agent
 from openinference.instrumentation.langchain import LangChainInstrumentor
-from utils import WebAgent, get_custom_arg_parser
+from agents.web.utils import WebAgent, get_custom_arg_parser
 
 class LangChainAgent(WebAgent):
     def __init__(
