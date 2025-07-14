@@ -5,6 +5,7 @@ import subprocess
 import traceback
 
 from agents.web.smol_agents import FullSmolAgent
+from smolagents.agent_types import AgentText
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -41,10 +42,14 @@ if __name__ == "__main__":
         for i, prob in enumerate(problems):
             print(f"\n*** Solving problem {i+1}/{len(problems)}  ***\n")
             try:
-                res = agent.run(prob, max_steps=10).to_string()
-                if "<think>" in res and "</think>" in res:
-                    res = res[res.rfind("</think>")+len("</think>"):]
-                answer.append(res.strip())
+                res = agent.run(prob, max_steps=10)
+                if isinstance(res, AgentText):
+                    res = res.to_string()
+                    if "<think>" in res and "</think>" in res:
+                        res = res[res.rfind("</think>")+len("</think>"):]
+                    answer.append(res.strip())
+                else:
+                    answer.append(str(res))
             except Exception as e:
                 print(traceback.format_exc())
                 answer.append(f"Exception: {e}")

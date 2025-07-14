@@ -425,6 +425,7 @@ class BasicSmolAgent(WebAgent):
                 api_base=api_base,
                 max_tokens=max_tokens,
                 temperature=0.0,
+                timeout=180,
             )
         else:
             raise NotImplemented(f"{model_type} is not supported.")
