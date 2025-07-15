@@ -35,7 +35,7 @@ if __name__ == "__main__":
         def write_stats(stats):
             if "CPU" not in stats or len(stats["CPU"].keys()) == 0:
                 return
-            stats["time"] = time.time_ns()
+            stats["timestamp"] = time.time_ns()
             f.write(json.dumps(stats) + "\n")
 
         ts = Tegrastats(write_stats, ["/usr/bin/tegrastats"])

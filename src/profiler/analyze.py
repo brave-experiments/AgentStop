@@ -21,22 +21,25 @@ GB_TO_BYTE = 1024 * 1024 * 1024
 
 TRACE_KIND_FIELD = "openinference.span.kind"
 LLM = "LLM"
-POWER_LOG_TYPE_MAC = "mac"
+DEVICE_TYPE_APPLE_LAPTOP = "apple_laptop"
+DEVICE_TYPE_JETSON = "jetson"
 FIRST_TOKEN_TS = "first_token_ts"
 
 class Analyzer:
     def __init__(
         self,
+        device_type,
         glances_log_path,
         agent_trace_path,
         power_log_path=None,
-        power_log_type=None,
         model_id=None, # LLM model for analyzing
         full_execution=False,
         output_dir="./analysis_logs",
         output_ext=["png"],
         display_plots=False,
     ):
+        assert device_type in [DEVICE_TYPE_APPLE_LAPTOP, DEVICE_TYPE_JETSON]
+        self.device_type = device_type
         with Path(glances_log_path).open("r", encoding="utf-8") as f:
             self.glances_log = [json.loads(l) for l in f if l.strip()]
         with Path(agent_trace_path).open("r", encoding="utf-8") as f:
@@ -44,12 +47,8 @@ class Analyzer:
         
         self.power_df = None
         if power_log_path is not None:
-            self.power_log_type = power_log_type
-            if power_log_type == POWER_LOG_TYPE_MAC:
-                with Path(power_log_path).open("r", encoding="utf-8") as f:
-                    self.power_log = [json.loads(l) for l in f if l.strip()]
-            else:
-                raise NotImplementedError("Only power log from macOS's powermetrics is supported for now")
+            with Path(power_log_path).open("r", encoding="utf-8") as f:
+                self.power_log = [json.loads(l) for l in f if l.strip()]
         
         if model_id is not None: # Make sure model_id is correct
             ollama.show(model=model_id)
@@ -73,11 +72,12 @@ class Analyzer:
             "battery_percent": next((s["value"] for s in l["sensors"] if s["label"] == "Battery"), 0),
             "battery_discharge": next((-min(s["value"], 0) for s in l["sensors"] if s["label"] == "Battery Current"), 0),
             "battery_temp": next(((s["value"] / 10 - 273.15) for s in l["sensors"] if s["label"] == "Battery Temperature"), 0),
-            "fan_max_speed": max(s["value"] for s in l["sensors"] if s["label"].startswith("Fan")),
+            "fan_max_speed": max((s["value"] for s in l["sensors"] if s["label"].startswith("Fan")), default=0),
             "processes_count": len([p for p in l["processlist"] if p["status"] != "Z"]),
             "processes_cpu_pct": sum(p["cpu_percent"] for p in l["processlist"] if p["status"] != "Z"),
             "processes_num_threads": sum(p["num_threads"] for p in l["processlist"] if p["status"] != "Z"),
             "processes_mem": sum(p["memory_info"]["rss"] for p in l["processlist"] if p["status"] != "Z"),
+            "mem_used": l["mem"]["used"],
             "memswap_used": l["memswap"]["used"],
             "diskio_read_bytes": sum(d["read_bytes"] for d in l["diskio"]),
             "diskio_write_bytes": sum(d["write_bytes"] for d in l["diskio"]),
@@ -90,6 +90,7 @@ class Analyzer:
         df["timestamp_plot"] = (df["timestamp"] - start_time) / SEC_TO_NANOSEC
         df["gpu_mem_plot"] = df["gpu_mem"] / GB_TO_BYTE
         df["processes_mem_plot"] = df["processes_mem"] / GB_TO_BYTE
+        df["mem_used_plot"] = df["mem_used"] / GB_TO_BYTE
         df["memswap_used_plot"] = df["memswap_used"] / GB_TO_BYTE
         
         df["diskio_read_bytes_plot"] = df["diskio_read_bytes"] / GB_TO_BYTE
@@ -100,11 +101,15 @@ class Analyzer:
         self.glances_df = df
 
     def process_power_log(self):
-        if self.power_log_type != POWER_LOG_TYPE_MAC:
-            raise NotImplementedError("Only power log from macOS's powermetrics is supported for now")
         if self.glances_df is None:
             raise Exception("Needs processed glances to process power log")
 
+        if self.device_type == DEVICE_TYPE_APPLE_LAPTOP:
+            self.process_powermetrics_log()
+        elif self.device_type == DEVICE_TYPE_JETSON:
+            self.process_tegrastats_log()
+
+    def process_powermetrics_log(self):
         glances_start_time = self.glances_df["timestamp"].iloc[0]
         glances_end_time = self.glances_df["timestamp"].iloc[-1]
         data = [
@@ -159,6 +164,39 @@ class Analyzer:
             corrected_time[i] = corrected_time[i + 1] - elapsed_times[i + 1]
 
         df["timestamp_plot"] = np.array(corrected_time) / SEC_TO_NANOSEC
+        self.power_df = df
+
+    def process_tegrastats_log(self):
+        glances_start_time = self.glances_df["timestamp"].iloc[0]
+        glances_end_time = self.glances_df["timestamp"].iloc[-1]
+        
+        sample = self.power_log[0]
+
+        data = []
+        for l in self.power_log:
+            ts = l["timestamp"]
+            if ts < glances_start_time:
+                continue
+            elif ts > glances_end_time:
+                break
+
+            d = {
+                "timestamp": ts,
+                "gpu_usage": l["GR3D"]["val"],
+                "gpu_freq": l["GR3D"]["frq"] / 1000.0,
+            }
+
+            for k, v in l["WATT"].items():
+                if k != "NC": # Skip "Not Connected"
+                    d[f"power_{k}"] = v["cur"]
+            
+            for k, v in l["TEMP"].items():
+                d[f"temp_{k}"] = max(v, 0.0)
+            
+            data.append(d)
+
+        df = pd.DataFrame.from_dict(data)
+        df["timestamp_plot"] = (df["timestamp"] - glances_start_time) / SEC_TO_NANOSEC
         self.power_df = df
 
     def describe_agent_action(self, text):
@@ -611,8 +649,8 @@ Write your short description here:
                 if len(second_metrics) > 1:
                     ax_second.legend(loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=len(second_metrics), frameon=False)            
             else:
-                ax.legend(loc="upper left", bbox_to_anchor=(0.0, 0.0), ncol=len(metrics), frameon=False)
-                ax_second.legend(loc="upper right", bbox_to_anchor=(1.0, 0.0), ncol=len(second_metrics), frameon=False)
+                ax.legend(loc="upper left", bbox_to_anchor=(0.0, 0.0), ncol=len(metrics), frameon=False, columnspacing=0.8)
+                ax_second.legend(loc="upper right", bbox_to_anchor=(1.0, 0.0), ncol=len(second_metrics), frameon=False, columnspacing=0.8)
         elif len(metrics) > 1:
             ax.legend(loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=len(metrics), frameon=False)
 
@@ -635,6 +673,18 @@ Write your short description here:
             plt.show()
 
     def plot_gpu_metrics(self):
+        if self.device_type == DEVICE_TYPE_JETSON:
+            return self.plot_metrics(
+                "gpu",
+                title="GPU Utilization and Frequency Over Time",
+                y_axis_label="GPU Utilization (%)",
+                metrics=[("gpu_usage", "GPU Utilization (%)")],
+                power=True,
+                second_y_axis_label="GPU Frequency (MHz)",
+                second_metrics=[("gpu_freq", "GPU Frequency (MHz)", {"color": "green", "linestyle": "-."})],
+                second_metrics_power=True,
+            )
+        
         self.plot_metrics(
             "gpu",
             title="GPU Memory and Utilization Over Time",
@@ -656,6 +706,17 @@ Write your short description here:
         )
 
     def plot_cpu_and_gpu_metrics(self):
+        if self.device_type == DEVICE_TYPE_JETSON:
+            return self.plot_metrics(
+                "cpu_and_gpu",
+                title="CPU and GPU Utilization and Frequency Over Time",
+                y_axis_label="CPU Utilization (%)",
+                metrics=[("processes_cpu_pct", "CPU Utilization (%)")],
+                second_y_axis_label="GPU Utilization (MHz)",
+                second_metrics=[("gpu_usage", "GPU Utilization (%)", {"color": "green", "linestyle": "-."})],
+                second_metrics_power=True,
+            )
+        
         self.plot_metrics(
             "cpu_and_gpu",
             title="CPU Process and GPU Memory Usage Over Time",
@@ -671,7 +732,11 @@ Write your short description here:
             "mem",
             title="Memory Usage Over Time",
             y_axis_label="GB",
-            metrics=[("processes_mem_plot", "Process Memory"), ("memswap_used_plot", "System Memswap")],
+            metrics=[
+                ("processes_mem_plot", "Process Memory"),
+                ("mem_used_plot", "System Memory Used"),
+                ("memswap_used_plot", "System Memswap Used"),
+            ],
         )
 
     def plot_diskio_metrics(self):
@@ -698,28 +763,37 @@ Write your short description here:
             ],
         )
 
-    def plot_temp_metrics(self):
-        self.plot_metrics(
-            "temp",
-            title="CPU, GPU, and Battery Temperature Over Time",
-            y_axis_label="Celcius",
-            metrics=[
+    def get_temperature_metrics(self):
+        if self.device_type == DEVICE_TYPE_APPLE_LAPTOP:
+            return [
                 ("smctemp_cpu", "CPU Temperature"),
                 ("gpu_temp", "GPU Temperature"),
                 ("battery_temp", "Battery Temperature"),
-            ],
+            ]
+        elif self.device_type == DEVICE_TYPE_JETSON:
+            return [
+                (c, c[5:]) for c in self.power_df.columns.to_list() if (
+                    c.startswith("temp_") and
+                    c[5:] in ["CPU", "GPU", "Tboard", "Tdiode"]
+                )
+            ]
+
+    def plot_temp_metrics(self):
+        self.plot_metrics(
+            "temp",
+            title="Temperature Over Time",
+            y_axis_label="Celcius",
+            metrics=self.get_temperature_metrics(),
+            power=self.device_type == DEVICE_TYPE_JETSON,
         )
 
     def plot_temp_and_fan_metrics(self):
         self.plot_metrics(
             "temp_and_fan",
-            title="CPU/GPU/Battery Temperature and Fan Speed Over Time",
+            title="Temperature and Fan Speed Over Time",
             y_axis_label="Celcius",
-            metrics=[
-                ("smctemp_cpu", "CPU Temperature"),
-                ("gpu_temp", "GPU Temperature"),
-                ("battery_temp", "Battery Temperature"),
-            ],
+            metrics=self.get_temperature_metrics(),
+            power=self.device_type == DEVICE_TYPE_JETSON,
             second_y_axis_label="RPM",
             second_metrics=[
                 ("fan_max_speed", "Fan Speed (max)", {"color": "brown", "linestyle": "--"}),
@@ -727,54 +801,61 @@ Write your short description here:
         )
 
     def plot_battery_metrics(self):
-        self.plot_metrics(
-            "battery",
-            title="Battery Capacity and Discharge Over Time",
-            y_axis_label="Capacity (%)",
-            metrics=[("battery_percent", "Capacity")],
-            second_y_axis_label="Discharge (mA)",
-            second_metrics=[("battery_discharge", "Discharge", {"color": "brown"})],
-        )
+        if self.device_type == DEVICE_TYPE_APPLE_LAPTOP:
+            self.plot_metrics(
+                "battery",
+                title="Battery Capacity and Discharge Over Time",
+                y_axis_label="Capacity (%)",
+                metrics=[("battery_percent", "Capacity")],
+                second_y_axis_label="Discharge (mA)",
+                second_metrics=[("battery_discharge", "Discharge", {"color": "brown"})],
+            )
+
+    def get_power_metrics(self):
+        if self.device_type == DEVICE_TYPE_APPLE_LAPTOP:
+            return [
+                ("cpu_power", "CPU Power"),
+                ("gpu_power", "GPU Power"),
+            ]
+        elif self.device_type == DEVICE_TYPE_JETSON:
+            return [
+                (c, c[6:]) for c in self.power_df.columns.to_list() if c.startswith("power_")
+            ]
 
     def plot_power_metrics(self):
         self.plot_metrics(
             "power",
-            title="CPU and GPU Power Over Time",
+            title="Power Usage Over Time",
             y_axis_label="mW",
-            metrics=[
-                ("cpu_power", "CPU Power"),
-                ("gpu_power", "GPU Power"),
-            ],
+            metrics=self.get_power_metrics(),
             power=True,
         )
 
     def plot_power_and_temp_metrics(self):
+        temp_metrics = self.get_temperature_metrics()
+        colors = sns.color_palette("Set1", len(temp_metrics))
+        temp_metrics = [
+            (*m, {"linestyle": "--", "color": colors[i]}) for i, m in enumerate(temp_metrics)
+        ]
         self.plot_metrics(
             "power_and_temp",
-            title="CPU/GPU Power and Temperature Over Time",
+            title="Power and Temperature Over Time",
             y_axis_label="mW",
-            metrics=[
-                ("cpu_power", "CPU Power"),
-                ("gpu_power", "GPU Power"),
-            ],
+            metrics=self.get_power_metrics(),
             power=True,
             second_y_axis_label="Temperature (Celcius)",
-            second_metrics=[
-                ("smctemp_cpu", "CPU Temperature", {"linestyle": "--", "color": "green"}),
-                ("gpu_temp", "GPU Temperature", {"linestyle": "--", "color": "brown"}),
-            ],
-            second_metrics_power=False,
+            second_metrics=temp_metrics,
+            second_metrics_power=self.device_type==DEVICE_TYPE_JETSON,
         )
 
     def plot_power_and_battery_metrics(self):
+        if self.device_type != DEVICE_TYPE_APPLE_LAPTOP:
+            return
         self.plot_metrics(
             "power_and_battery",
-            title="CPU/GPU Power and Battery Discharge Over Time",
+            title="Power and Battery Discharge Over Time",
             y_axis_label="mW",
-            metrics=[
-                ("cpu_power", "CPU Power"),
-                ("gpu_power", "GPU Power"),
-            ],
+            metrics=self.get_power_metrics(),
             power=True,
             second_y_axis_label="mA",
             second_metrics=[
@@ -925,8 +1006,8 @@ Write your short description here:
             self.plot_power_and_temp_metrics()
             self.plot_power_and_battery_metrics()
 
-        self.summarize_stats()
-        self.summarize_stats_per_step()
+        # self.summarize_stats()
+        # self.summarize_stats_per_step()
 
 if __name__ == "__main__":
     example_text = """
@@ -936,7 +1017,7 @@ python analyze.py \\
 --glances_log_path ./logs/smolagent_glances.jsonl \\
 --agent_trace_path ./logs/smolagent_trace.json \\
 --power_log_path ./logs/smolagent_powermetrics.jsonl \\
---power_log_type mac
+--device_type mac
 --model_id qwen3:32b \\
 --output_dir ./analysis_logs \\
 --output_ext png pdf
@@ -946,15 +1027,16 @@ python analyze.py \\
         epilog=example_text,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument(
+        "--device_type",
+        type=str,
+        required=True,
+        choices=[DEVICE_TYPE_APPLE_LAPTOP, DEVICE_TYPE_JETSON],
+        help="Type of device."
+    )
     parser.add_argument("--glances_log_path", type=str, required=True, help="Path to the glances log.")
     parser.add_argument("--agent_trace_path", type=str, required=True, help="Path to the agent's trace.")
     parser.add_argument("--power_log_path", type=str, default=None, help="Path to the power measurement log.")
-    parser.add_argument(
-        "--power_log_type", type=str,
-        required="--power_log_path" in sys.argv,
-        choices=[POWER_LOG_TYPE_MAC],
-        help="Type of power measurement."
-    )
     parser.add_argument("--model_id", type=str, default=None, help="Ollama model id for analyzing.")
     parser.add_argument("--full_execution", action=argparse.BooleanOptionalAction, help="Whether to print all agent's execution steps.")
     parser.add_argument("--output_dir", type=str, required=True, help="Path to the directory to write analyses, figures, etc.")
@@ -964,10 +1046,10 @@ python analyze.py \\
     args = parser.parse_args()
 
     analyzer = Analyzer(
+        args.device_type,
         args.glances_log_path,
         args.agent_trace_path,
         power_log_path=args.power_log_path,
-        power_log_type=args.power_log_type,
         model_id=args.model_id,
         full_execution=args.full_execution,
         output_dir=args.output_dir,

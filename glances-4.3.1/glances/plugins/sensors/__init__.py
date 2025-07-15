@@ -12,6 +12,7 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import glob
 import platform
 import psutil
 import subprocess
@@ -328,6 +329,10 @@ class GlancesGrabSensors:
         self.sensor_type = sensor_def.get('type')
         self.sensor_unit = sensor_def.get('unit')
 
+        self.system_name = platform.system()
+        self.release = platform.release()
+        self.jetson_fan_paths = None
+
         self.init = False
         try:
             self.__fetch_data()
@@ -336,17 +341,15 @@ class GlancesGrabSensors:
             logger.debug(f"Cannot grab {self.sensor_type}. Platform not supported.")
 
     def __fetch_data(self) -> dict[str, list]:
-        os_name = platform.system()
-
         if self.sensor_type == sensors_definition.get('cpu_temp').get('type'):
             # Solve an issue #1203 concerning a RunTimeError warning message displayed
             # in the curses interface.
             warnings.filterwarnings("ignore")
 
-            if os_name == "Linux":
+            if self.system_name == "Linux":
                 # psutil>=5.1.0, Linux-only
                 return psutil.sensors_temperatures()
-            elif os_name == "Darwin":
+            elif self.system_name == "Darwin":
                 try:
                     temp = subprocess.check_output(["smctemp", "-c", "-i20", "-n4"], text=True, stderr=subprocess.DEVNULL)
                     temp = float(temp.strip())
@@ -357,10 +360,29 @@ class GlancesGrabSensors:
                 return {}
 
         if self.sensor_type == sensors_definition.get('fan_speed').get('type'):
-            if os_name == "Linux":
-                # psutil>=5.2.0, Linux-only
-                return psutil.sensors_fans()
-            elif os_name == "Darwin":
+            if self.system_name == "Linux":
+                if "tegra" in self.release:
+                    if self.jetson_fan_paths is None:
+                        self.jetson_fan_paths = glob.glob("/sys/class/hwmon/hwmon*/rpm")
+                    try:
+                        fan_speed = []
+                        for i, path in enumerate(self.jetson_fan_paths):
+                            rpm = subprocess.check_output(
+                                ["cat", path],
+                                text=True,
+                                stderr=subprocess.DEVNULL,
+                            )
+                            rpm = int(rpm.strip())
+                            fan_speed.append(sfan(f"Fan {i}", rpm))
+                        if len(fan_speed) > 0:
+                            return {"jetson": fan_speed}
+                        else:
+                            return {}
+                    except:
+                        return {}
+                else:
+                    return psutil.sensors_fans() # psutil>=5.2.0, Linux-only
+            elif self.system_name == "Darwin":
                 try:
                     res = subprocess.check_output(["istats", "fan", "speed", "--no-graphs", "--no-labels"], text=True, stderr=subprocess.DEVNULL)
                     fan_speed = []
