@@ -26,7 +26,7 @@ class LangChainAgent(WebAgent):
         elif model_type == "anthropic":
             model = ChatAnthropic(model=model_id, max_tokens=max_tokens)
         else:
-            raise NotImplemented("Invalid model type")
+            raise NotImplementedError("Invalid model type")
 
         tools = [BraveSearch()]
         self.agent = create_react_agent(model, tools)

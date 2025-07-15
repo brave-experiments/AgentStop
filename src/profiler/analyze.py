@@ -49,7 +49,7 @@ class Analyzer:
                 with Path(power_log_path).open("r", encoding="utf-8") as f:
                     self.power_log = [json.loads(l) for l in f if l.strip()]
             else:
-                raise NotImplemented("Only power log from macOS's powermetrics is supported for now")
+                raise NotImplementedError("Only power log from macOS's powermetrics is supported for now")
         
         if model_id is not None: # Make sure model_id is correct
             ollama.show(model=model_id)
@@ -101,7 +101,7 @@ class Analyzer:
 
     def process_power_log(self):
         if self.power_log_type != POWER_LOG_TYPE_MAC:
-            raise NotImplemented("Only power log from macOS's powermetrics is supported for now")
+            raise NotImplementedError("Only power log from macOS's powermetrics is supported for now")
         if self.glances_df is None:
             raise Exception("Needs processed glances to process power log")
 

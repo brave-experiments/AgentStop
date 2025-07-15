@@ -71,7 +71,7 @@ class WebAgent:
         self.kwargs = kwargs
 
     def get_instrumentor(self):
-        raise NotImplemented("You need to implement this method.")
+        raise NotImplementedError("You need to implement this method.")
 
     def enable_tracing(self, output_path):
         self.get_instrumentor().instrument(
@@ -82,7 +82,7 @@ class WebAgent:
         self.get_instrumentor().uninstrument()
 
     def run(self, *args, **kwargs):
-        raise NotImplemented("You need to implement this method.")
+        raise NotImplementedError("You need to implement this method.")
 
 
 def get_json_exporter(service_name, output_file):

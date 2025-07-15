@@ -128,11 +128,11 @@ class Profiler:
                     + ("|.*(o|O)llama.*" if self.include_ollama else ""),
                     "--time",
                     str(self.frequency / 1000),
+                    "--disable-check-update",
                 ],
                 stdout=f,
                 stderr=subprocess.DEVNULL,
             )
-
             # Give glances a moment to start
             time.sleep(3)
             print(
@@ -143,8 +143,10 @@ class Profiler:
         os_name = platform.system()
         if os_name == "Darwin":
             self.start_powermetrics()
+        elif os_name == "Linux" and "tegra" in platform.release():
+            self.start_tegrastats()
         else:
-            raise NotImplemented("Power measurement is currently only supported on Mac.")
+            raise NotImplementedError("Power measurement is not supported on your device.")
 
     def start_powermetrics(self):
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
@@ -169,6 +171,22 @@ class Profiler:
             f"Started powermetrics logging to {self.power_tmp_file} (PID = {self.power_process.pid})"
         )
 
+    def start_tegrastats(self):
+        self.power_process = subprocess.Popen(
+            [
+                "python",
+                "-m", "profiler.jetson",
+                "--output_path", self.power_output_path,
+                "--interval", str(self.frequency),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(3)
+        print(
+            f"Started tegrastats logging to {self.power_output_path} (PID = {self.power_process.pid})"
+        )
+
     def start_target_script(self):
         """Run the target Python script and track its process tree"""
         print(f"Starting target script: {self.target_script}")
@@ -177,7 +195,7 @@ class Profiler:
         try:
             # Run the target script
             self.target_process = subprocess.Popen(
-                [sys.executable, self.target_script, *self.args],
+                [sys.executable, "-m", self.target_script, *self.args],
                 stdout=output,
                 stderr=output,
             )
@@ -276,8 +294,11 @@ class Profiler:
         os_name = platform.system()
         if os_name == "Darwin":
             self.save_powermetrics()
+        elif os_name == "Linux":
+            if "tegra" not in platform.release():
+                raise NotImplementedError("Power measurement on Linux is currently only supported for Nvidia Jetson.")
         else:
-            raise NotImplemented("Power measurement is currently only supported on Mac.")
+            raise NotImplementedError("Power measurement is not supported on your device.")
 
     def save_powermetrics(self):
         with open(self.power_tmp_file, "rb") as f:
@@ -386,8 +407,12 @@ python profile.py \\
 
     args = parser.parse_args()
 
-    if args.power_output_path is not None and platform.system() == "Darwin" and os.geteuid() != 0:
-        raise Exception("Must run with sudo to enable power measurement on Mac")
+    if args.power_output_path is not None:
+        system_name = platform.system()
+        if not (system_name == "Darwin" or (system_name == "Linux" and "tegra" in platform.release())):
+            raise Exception("Power measurement is not supported on your device.")
+        if os.geteuid() != 0:
+            raise Exception("Must run with sudo to enable power measurement.")
     
     # Create and run the profiler
     script_args = [

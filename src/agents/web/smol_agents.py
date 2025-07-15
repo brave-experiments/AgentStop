@@ -272,7 +272,7 @@ class CustomToolWithCompression():
         return res
 
     def _forward(self, query):
-        raise NotImplemented("This method must be implemented!")
+        raise NotImplementedError("This method must be implemented!")
 
 
 class CustomWebSearchTool(CustomToolWithCompression, WebSearchTool):
@@ -428,7 +428,7 @@ class BasicSmolAgent(WebAgent):
                 timeout=180,
             )
         else:
-            raise NotImplemented(f"{model_type} is not supported.")
+            raise NotImplementedError(f"{model_type} is not supported.")
 
     def init_agent(self):
         self.agent = CodeAgent(
