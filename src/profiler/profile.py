@@ -10,6 +10,7 @@ import os
 import platform
 import plistlib
 import psutil
+import shlex
 import signal
 import subprocess
 import sys
@@ -25,27 +26,20 @@ class Profiler:
     def __init__(
         self,
         target_script,
-        args,
         process_filter,
         glances_output_path,
         power_output_path=None,
-        frequency=1000, # ms
+        interval=1000, # ms
         capture_stdout=False,
-        include_ollama=False,
-        model_id=None,
+        ollama_model_id=None,
     ):
         self.target_script = target_script
-        self.args = args
         self.process_filter = process_filter
         self.glances_output_path = glances_output_path
         self.power_output_path = power_output_path
-        self.frequency = frequency
+        self.interval = interval
         self.capture_stdout = capture_stdout
-        self.include_ollama = include_ollama
-        self.model_id = model_id
-
-        if self.include_ollama and self.model_id is None:
-            raise Exception("Model ID must be specified if Ollama is included.")
+        self.ollama_model_id = ollama_model_id
 
         self.glances_process = None
         self.glances_tmp_file = None
@@ -102,12 +96,11 @@ class Profiler:
             stderr=subprocess.DEVNULL,
         )
         time.sleep(3)
-        model_id = self.model_id.split("/")[-1]
+        model_id = self.ollama_model_id.split("/")[-1]
         print(f"Preloading model {model_id}...")
         ollama.generate(
             model=model_id,
             prompt=" ",
-            # messages=[{"role": "user", "content": " "}],
             options={"temperature": 0.0, "num_predict": 1},
         )
         print("Ollama started and preloaded.")
@@ -125,9 +118,9 @@ class Profiler:
                     plugins,
                     "--process-filter",
                     self.process_filter
-                    + ("|.*(o|O)llama.*" if self.include_ollama else ""),
+                    + ("|.*(o|O)llama.*" if self.ollama_model_id is not None else ""),
                     "--time",
-                    str(self.frequency / 1000),
+                    str(self.interval / 1000),
                     "--disable-check-update",
                 ],
                 stdout=f,
@@ -156,7 +149,7 @@ class Profiler:
             [
                 "powermetrics",
                 "--format", "plist",
-                "--sample-rate", str(self.frequency),
+                "--sample-rate", str(self.interval),
                 "--samplers", "cpu_power,gpu_power,thermal",
                 "--order", "pid",
                 "--output-file", self.power_tmp_file
@@ -177,7 +170,7 @@ class Profiler:
                 "python",
                 "-m", "profiler.jetson",
                 "--output_path", self.power_output_path,
-                "--interval", str(self.frequency),
+                "--interval", str(self.interval),
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -195,7 +188,7 @@ class Profiler:
         try:
             # Run the target script
             self.target_process = subprocess.Popen(
-                [sys.executable, "-m", self.target_script, *self.args],
+                shlex.split(self.target_script),
                 stdout=output,
                 stderr=output,
             )
@@ -251,7 +244,7 @@ class Profiler:
         print("Power measurement stopped")
 
     def should_include_process(self, pid, name):
-        return pid in self.target_pids or (self.include_ollama and "ollama" in name.lower())
+        return pid in self.target_pids or (self.ollama_model_id is not None and "ollama" in name.lower())
 
     def save_jsonl(self, lines, path_name):
         path = Path(path_name)
@@ -322,7 +315,7 @@ class Profiler:
         if self.power_tmp_file is not None:
             os.remove(self.power_tmp_file)
             self.power_tmp_file = None
-        if self.include_ollama:
+        if self.ollama_model_id is not None:
             self.terminate_ollama()
         
 
@@ -330,12 +323,12 @@ class Profiler:
         """Main method to run the complete monitoring process"""
         try:
             # Start
-            if self.include_ollama:
+            if self.ollama_model_id is not None:
                 self.terminate_ollama()
             self.start_glances()
             if self.power_output_path is not None:
                 self.start_power_measurement()
-            if self.include_ollama:
+            if self.ollama_model_id is not None:
                 self.start_ollama()
             self.start_target_script()
 
@@ -360,30 +353,18 @@ def main():
     example_text = """
 Examples:
 
-python -m profiler.profile \\
---script agents.web.smol_agents \\
---model_id mlx-community/Qwen3-32B-4bit \\
---model_type mlx \\
---prompt "What is the meaning of 42?" \\
---trace_path ./logs/smolagent_trace.json \\
+sudo python -m profiler.profile \\
+--script "python -m agents.web.smol_agents \\
+    --agent_type code --model_id ollama_chat/qwen3:8b --model_type litellm \\
+    --prompt 'What is the meaning of 42?' \\
+    --stream \\
+    --trace_path ../logs/smol_ollama_qwen3_8b_compressed_stream/smolagent_trace.json" \\
 --glances_process_filter ".*python.*" \\
---glances_output_path logs/smolagent_glances.jsonl \\
---power_output_path logs/smolagent_power.jsonl \\
---frequency 500 \\
---capture_stdout
-
-python -m profiler.profile \\
---script agents.web.langchain_agents \\
---model_id qwen3:32b \\
---model_type ollama \\
---prompt "What is the meaning of 42?" \\
---trace_path ./logs/langchain_trace.json \\
---glances_process_filter ".*python.*" \\
---glances_output_path logs/langchain_glances.jsonl \\
---power_output_path logs/langchain_power.jsonl \\
---frequency 500 \\
+--glances_output_path ../logs/smol_ollama_qwen3_1.7b_compressed_stream/smolagent_glances.jsonl \\
+--power_output_path ../logs/smol_ollama_qwen3_1.7b_compressed_stream/smolagent_powermetrics.jsonl \\
+--frequency 100 \\
 --capture_stdout \\
---include_ollama
+--ollama_model_id ollama_chat/qwen3:8b
 """
 
     parser = argparse.ArgumentParser(
@@ -392,19 +373,13 @@ python -m profiler.profile \\
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--script", type=str, required=True, help="Target agent script")
-    parser.add_argument("--model_id", type=str, required=True, help="Model ID to use.")
-    parser.add_argument("--model_type", type=str, required=True, help="Type of the model backend.")
-    parser.add_argument("--prompt", type=str, required=True, help="Prompt to give to the agent.")
-    parser.add_argument("--trace_path", type=str, default=None, help="Path to save the JSON trace.")
-    parser.add_argument("--api_key_env", type=str, default=None, help="Optional .env's field for the model API key.")
     parser.add_argument("--glances_process_filter", type=str, default=None, help="Regex for filtering glances process.")
     parser.add_argument("--glances_output_path", type=str, default=None, help="Path to save the glances log in JSONL.")
     parser.add_argument("--power_output_path", type=str, default=None, help="Path to save the processed power profile log in JSONL format.")
-    parser.add_argument("--frequency", type=int, default=1000, help="Samples resource metrics every <frequency> milliseconds")
+    parser.add_argument("--interval", type=int, default=1000, help="Samples resource metrics every <interval> milliseconds")
     parser.add_argument("--capture_stdout", action=argparse.BooleanOptionalAction, help="Print the output of the agent to stdout.")
-    parser.add_argument("--include_ollama", action=argparse.BooleanOptionalAction, help="Include Ollama in the profiling.")
-    parser.add_argument("--stream", action=argparse.BooleanOptionalAction, help="Enable streaming.")
-
+    parser.add_argument("--ollama_model_id", type=str, default=None, help="If specified, preload Ollama with the model and include Ollama in the profiling.")
+    
     args = parser.parse_args()
 
     if args.power_output_path is not None:
@@ -413,31 +388,15 @@ python -m profiler.profile \\
             raise Exception("Power measurement is not supported on your device.")
         if os.geteuid() != 0:
             raise Exception("Must run with sudo to enable power measurement.")
-    
-    # Create and run the profiler
-    script_args = [
-        ("--model_id", args.model_id),
-        ("--model_type", args.model_type),
-        ("--stream" if args.stream else "--no-stream",),
-        ("--prompt", args.prompt),
-        ("--trace_path", args.trace_path),
-        ("--api_key_env", args.api_key_env),
-    ]
-    script_args = [
-        a for arg in script_args for a in arg
-        if len(arg) == 1 or arg[1] is not None
-    ]
 
     profiler = Profiler(
         args.script,
-        script_args,
         args.glances_process_filter,
         args.glances_output_path,
         power_output_path=args.power_output_path,
-        frequency=args.frequency,
+        interval=args.interval,
         capture_stdout=args.capture_stdout,
-        include_ollama=args.include_ollama,
-        model_id=args.model_id,
+        ollama_model_id=args.ollama_model_id,
     )
     success = profiler.start_profiling()
     if success:

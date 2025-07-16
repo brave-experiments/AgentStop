@@ -262,7 +262,7 @@ class CustomToolWithCompression():
     def __init__(self, *args, compression_ratio=1.0, add_no_think=False, **kwargs):
         self.compress_tool = TextCompressionTool(compression_ratio=compression_ratio)
         self.add_no_think = add_no_think
-        super().__init__()
+        super().__init__(*args, **kwargs)
 
     def forward(self, query):
         res = self._forward(query)
@@ -431,14 +431,10 @@ class BasicSmolAgent(WebAgent):
             raise NotImplementedError(f"{model_type} is not supported.")
 
     def init_agent(self):
-        self.agent = CodeAgent(
-            tools=self.get_tools(),
-            model=self.model,
-            instructions=NO_THINK if self.should_add_no_think() else None,
-        )
+        raise NotImplementedError("Agents must be specified.")
     
     def get_tools(self):
-        return [CustomWebSearchTool(add_no_think=self.should_add_no_think())]
+        raise NotImplementedError("Tools must be specified.")
 
     def should_add_no_think(self):
         return (
@@ -460,22 +456,17 @@ class BasicSmolAgent(WebAgent):
         return self.agent.run(prompt, *args, **kwargs)
 
 
-class SmolAgentWithCompression(BasicSmolAgent):
+class WebCodeAgent(BasicSmolAgent):
     def __init__(self, *args, compression_ratio=1.0, **kwargs):
         self.compression_ratio = compression_ratio
-        super().__init__("SmolAgentWithCompression", *args, **kwargs)
+        super().__init__(self.__class__.__name__, *args, **kwargs)
 
-    def get_tools(self):
-        return [CustomWebSearchTool(
-            compression_ratio=self.compression_ratio,
-            add_no_think=self.should_add_no_think(),
-        )]
-
-
-class FullSmolAgent(BasicSmolAgent):
-    def __init__(self, *args, compression_ratio=1.0, **kwargs):
-        self.compression_ratio = compression_ratio
-        super().__init__("FullSmolAgent", *args, **kwargs)
+    def init_agent(self):
+        self.agent = CodeAgent(
+            tools=self.get_tools(),
+            model=self.model,
+            instructions=NO_THINK if self.should_add_no_think() else None,
+        )
 
     def get_tools(self):
         add_no_think = self.should_add_no_think()
@@ -487,7 +478,7 @@ class FullSmolAgent(BasicSmolAgent):
             CustomWikipediaSearchTool(
                 user_agent="MyWebAgent (dpham@brave.com)",
                 language="en",
-                content_type="text",
+                content_type="summary",
                 extract_format="WIKI",
                 compression_ratio=self.compression_ratio,
                 add_no_think=add_no_think,
@@ -495,8 +486,28 @@ class FullSmolAgent(BasicSmolAgent):
             CustomVisitWebpageTool(
                 compression_ratio=self.compression_ratio,
                 add_no_think=add_no_think,
+                max_output_length=10000,
             ),
         ]
+
+
+class WebToolCallingAgent(WebCodeAgent):
+    def init_agent(self):
+        self.agent = ToolCallingAgent(
+            tools=self.get_tools(),
+            model=self.model,
+            instructions=NO_THINK if self.should_add_no_think() else None,
+        )
+
+
+class AgentType:
+    CODE = "code"
+    TOOL = "tool"
+
+AGENT_MAP = {
+    AgentType.CODE: WebCodeAgent,
+    AgentType.TOOL: WebToolCallingAgent,
+}
 
 
 if __name__ == "__main__":
@@ -505,6 +516,7 @@ Examples:
 
 Run with an MLX model:
 python -m agents.web.smol_agents \\
+--agent_type code \\
 --model_id mlx-community/Qwen3-32B-4bit \\
 --model_type mlx \\
 --trace_path ./trace.json \\
@@ -512,6 +524,7 @@ python -m agents.web.smol_agents \\
 
 Run with Anthropic via LiteLLM:
 python -m agents.web.smol_agents \\
+--agent_type tool \\
 --model_id anthropic/claude-sonnet-4-20250514 \\
 --model_type litellm \\
 --trace_path ./trace.json \\
@@ -520,6 +533,7 @@ python -m agents.web.smol_agents \\
 
 Run with Ollama via LiteLLM with streaming:
 python -m agents.web.smol_agents \\
+--agent_type code \\
 --model_id ollama_chat/qwen3:32b \\
 --model_type litellm \\
 --stream \\
@@ -528,6 +542,13 @@ python -m agents.web.smol_agents \\
 """
 
     parser = get_custom_arg_parser(description="Run a SmolAgent with tracing.", example_text=example_text)
+    parser.add_argument(
+        "--agent_type",
+        type=str,
+        required=True,
+        choices=list(AGENT_MAP.keys()),
+        help=f"Type of agent.",
+    )
     parser.add_argument(
         "--planning_interval", type=int, default=None, help="Planning interval."
     )
@@ -540,7 +561,7 @@ python -m agents.web.smol_agents \\
     )
     args = parser.parse_args()
 
-    agent = FullSmolAgent(
+    agent = AGENT_MAP[args.agent_type](
         model_id=args.model_id,
         model_type=args.model_type,
         stream=args.stream,
