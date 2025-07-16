@@ -18,6 +18,7 @@ from pathlib import Path
 
 SEC_TO_NANOSEC = 1_000_000_000
 GB_TO_BYTE = 1024 * 1024 * 1024
+KB_TO_BYTE = 1024
 
 TRACE_KIND_FIELD = "openinference.span.kind"
 LLM = "LLM"
@@ -83,6 +84,8 @@ class Analyzer:
             "diskio_write_bytes": sum(d["write_bytes"] for d in l["diskio"]),
             "diskio_read_bytes_per_sec": sum(d.get("read_bytes_rate_per_sec", 0) for d in l["diskio"]),
             "diskio_write_bytes_per_sec": sum(d.get("write_bytes_rate_per_sec", 0) for d in l["diskio"]),
+            "network_sent_all": sum(itf["bytes_sent"] for itf in l["network"]) / KB_TO_BYTE,
+            "network_recv_all": sum(itf["bytes_recv"] for itf in l["network"]) / KB_TO_BYTE,
         } for l in self.glances_log]
         df = pd.DataFrame.from_dict(data)
 
@@ -763,6 +766,17 @@ Write your short description here:
             ],
         )
 
+    def plot_network_metrics(self):
+        self.plot_metrics(
+            "network",
+            title="Network Traffic Across All Interfaces Over Time",
+            y_axis_label="Sent (KB)",
+            metrics=[("network_sent_all", "Sent")],
+            second_y_axis_label="Received (KB)",
+            second_metrics=[("network_recv_all", "Received", {"color": "brown"})],
+            second_subplot=True,
+        )
+
     def get_temperature_metrics(self):
         if self.device_type == DEVICE_TYPE_APPLE_LAPTOP:
             return [
@@ -997,6 +1011,7 @@ Write your short description here:
         self.plot_mem_metrics()
         self.plot_diskio_metrics()
         self.plot_concurrency_metrics()
+        self.plot_network_metrics()
         self.plot_temp_metrics()
         self.plot_temp_and_fan_metrics()
         self.plot_battery_metrics()
