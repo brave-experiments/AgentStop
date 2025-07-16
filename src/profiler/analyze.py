@@ -1013,7 +1013,7 @@ if __name__ == "__main__":
     example_text = """
 Examples:
 
-python analyze.py \\
+python -m profiler.analyze \\
 --glances_log_path ./logs/smolagent_glances.jsonl \\
 --agent_trace_path ./logs/smolagent_trace.json \\
 --power_log_path ./logs/smolagent_powermetrics.jsonl \\

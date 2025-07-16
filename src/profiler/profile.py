@@ -360,8 +360,8 @@ def main():
     example_text = """
 Examples:
 
-python profile.py \\
---script ../agents/web/smol_agents.py \\
+python -m profiler.profile \\
+--script agents.web.smol_agents \\
 --model_id mlx-community/Qwen3-32B-4bit \\
 --model_type mlx \\
 --prompt "What is the meaning of 42?" \\
@@ -372,8 +372,8 @@ python profile.py \\
 --frequency 500 \\
 --capture_stdout
 
-python profile.py \\
---script ../agents/web/langchain_agents.py \\
+python -m profiler.profile \\
+--script agents.web.langchain_agents \\
 --model_id qwen3:32b \\
 --model_type ollama \\
 --prompt "What is the meaning of 42?" \\

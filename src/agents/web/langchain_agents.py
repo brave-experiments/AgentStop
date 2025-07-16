@@ -53,14 +53,14 @@ if __name__ == "__main__":
 Examples:
 
 Run with an Ollama model:
-python langchain_agents.py \\
+python -m agents.web.langchain_agents \\
 --model_id qwen2.5-coder:32b \\
 --model_type ollama \\
 --trace_path ./trace.json \\
 --prompt "If the US keeps its 2024 growth rate, how many years will it take for the GDP to double?"
 
 Run with an Anthropic model:
-python langchain_agents.py \\
+python -m agents.web.langchain_agents \\
 --model_id claude-sonnet-4-20250514 \\
 --model_type anthropic \\
 --trace_path ./trace.json \\

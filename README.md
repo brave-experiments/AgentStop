@@ -4,9 +4,17 @@ This repo contains measurement tools for profiling agent's system performance.
 
 ### Installation
 
+#### Ollama
+
 #### Environment
 
 Make sure to create and activate a virtual environment (we recommend `conda`).
+
+#### Python packages
+
+```
+pip install fake_useragent llmlingua matplotlib ollama "smolagents[toolkit,litellm,telemetry]" pymupdf4llm wikipedia-api
+```
 
 #### Glances
 
@@ -33,4 +41,4 @@ This command line program is used for retrieving fan speed on Mac. Install via `
 
 #### OpenInference
 
-We use OpenInference's instrumentation to trace various agent frameworks. See [Arize-ai/openinference](https://github.com/Arize-ai/openinference/tree/main) for installation instructions specific to your target agent frameworks.
+We use OpenInference's instrumentation to trace various agent frameworks. The installation steps above already covers smolagents. See [Arize-ai/openinference](https://github.com/Arize-ai/openinference/tree/main) for installation instructions specific to your target agent frameworks.

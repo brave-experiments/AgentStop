@@ -504,14 +504,14 @@ if __name__ == "__main__":
 Examples:
 
 Run with an MLX model:
-python smol_agents.py \\
+python -m agents.web.smol_agents \\
 --model_id mlx-community/Qwen3-32B-4bit \\
 --model_type mlx \\
 --trace_path ./trace.json \\
 --prompt "If the US keeps its 2024 growth rate, how many years will it take for the GDP to double?"
 
 Run with Anthropic via LiteLLM:
-python smol_agents.py \\
+python -m agents.web.smol_agents \\
 --model_id anthropic/claude-sonnet-4-20250514 \\
 --model_type litellm \\
 --trace_path ./trace.json \\
@@ -519,7 +519,7 @@ python smol_agents.py \\
 --api_key_env ENV_FIELD_FOR_YOUR_API_KEY
 
 Run with Ollama via LiteLLM with streaming:
-python smol_agents.py \\
+python -m agents.web.smol_agents \\
 --model_id ollama_chat/qwen3:32b \\
 --model_type litellm \\
 --stream \\
