@@ -31,6 +31,7 @@ class Profiler:
         power_output_path=None,
         interval=1000, # ms
         capture_stdout=False,
+        include_ollama=False,
         ollama_model_id=None,
     ):
         self.target_script = target_script
@@ -39,6 +40,7 @@ class Profiler:
         self.power_output_path = power_output_path
         self.interval = interval
         self.capture_stdout = capture_stdout
+        self.include_ollama = include_ollama
         self.ollama_model_id = ollama_model_id
 
         self.glances_process = None
@@ -118,7 +120,7 @@ class Profiler:
                     plugins,
                     "--process-filter",
                     self.process_filter
-                    + ("|.*(o|O)llama.*" if self.ollama_model_id is not None else ""),
+                    + ("|.*(o|O)llama.*" if self.include_ollama else ""),
                     "--time",
                     str(self.interval / 1000),
                     "--disable-check-update",
@@ -244,7 +246,7 @@ class Profiler:
         print("Power measurement stopped")
 
     def should_include_process(self, pid, name):
-        return pid in self.target_pids or (self.ollama_model_id is not None and "ollama" in name.lower())
+        return pid in self.target_pids or (self.include_ollama and "ollama" in name.lower())
 
     def save_jsonl(self, lines, path_name):
         path = Path(path_name)
@@ -378,7 +380,8 @@ sudo python -m profiler.profile \\
     parser.add_argument("--power_output_path", type=str, default=None, help="Path to save the processed power profile log in JSONL format.")
     parser.add_argument("--interval", type=int, default=1000, help="Samples resource metrics every <interval> milliseconds")
     parser.add_argument("--capture_stdout", action=argparse.BooleanOptionalAction, help="Print the output of the agent to stdout.")
-    parser.add_argument("--ollama_model_id", type=str, default=None, help="If specified, preload Ollama with the model and include Ollama in the profiling.")
+    parser.add_argument("--include_ollama", action=argparse.BooleanOptionalAction, help="Include Ollama in profiling.")
+    parser.add_argument("--ollama_model_id", type=str, default=None, help="If specified, preload Ollama with the model.")
     
     args = parser.parse_args()
 
@@ -396,6 +399,7 @@ sudo python -m profiler.profile \\
         power_output_path=args.power_output_path,
         interval=args.interval,
         capture_stdout=args.capture_stdout,
+        include_ollama=args.include_ollama,
         ollama_model_id=args.ollama_model_id,
     )
     success = profiler.start_profiling()
