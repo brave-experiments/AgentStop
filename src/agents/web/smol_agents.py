@@ -532,6 +532,9 @@ class BasicSmolAgent(WebAgent):
                 },
             )
         elif model_type == "litellm":
+            flatten = None
+            if "mlc" in model_id.lower():
+                flatten = True
             self.model = LiteLLMModel(
                 model_id=model_id,
                 api_key=api_key,
@@ -540,6 +543,7 @@ class BasicSmolAgent(WebAgent):
                 temperature=0.0,
                 timeout=180,
                 seed=47,
+                flatten_messages_as_text=flatten,
             )
         else:
             raise NotImplementedError(f"{model_type} is not supported.")
@@ -553,7 +557,7 @@ class BasicSmolAgent(WebAgent):
     def should_add_no_think(self):
         return (
             self.model_type == "litellm" and
-            "qwen3" in self.model_id and
+            "qwen3" in self.model_id.lower() and
             not self.thinking
         )
 
@@ -652,7 +656,21 @@ python -m agents.web.smol_agents \\
 --model_type litellm \\
 --stream \\
 --trace_path ./trace.json \\
---prompt "Summarize the US Constitution."
+--prompt "What is the meaning of life?"
+
+Run with MLC-LLM via LiteLLM
+(assuming you have run something like
+`mlc_llm serve HF://mlc-ai/Qwen3-32B-q4f16_1-MLC \\
+    --overrides "gpu_memory_utilization=1.0;prefill_chunk_size=1024"`:
+
+python -m agents.web.smol_agents \\
+--agent_type code \\
+--model_id openai/HF://mlc-ai/Qwen3-32B-q4f16_1-MLC \\
+--model_type litellm \\
+--api_base http://127.0.0.1:8000/v1 \\
+--stream \\
+--trace_path ./trace.json \\
+--prompt "How to learn to vocal fry?"
 """
 
     parser = get_custom_arg_parser(description="Run a SmolAgent with tracing.", example_text=example_text)
@@ -680,10 +698,10 @@ python -m agents.web.smol_agents \\
         model_type=args.model_type,
         stream=args.stream,
         thinking=args.thinking,
-        api_key=os.getenv(args.api_key_env) if args.api_key_env is not None else None,
+        api_key=os.getenv(args.api_key_env) if args.api_key_env else "FAKE_KEY",
         api_base=args.api_base,
         compression_ratio=args.compression_ratio,
     )
     if args.trace_path is not None:
         agent.enable_tracing(args.trace_path)
-    agent.run(args.prompt)
+    agent.run(args.prompt, max_steps=10)

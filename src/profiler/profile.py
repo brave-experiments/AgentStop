@@ -10,6 +10,7 @@ import os
 import platform
 import plistlib
 import psutil
+import re
 import shlex
 import signal
 import subprocess
@@ -21,6 +22,11 @@ import traceback
 from datetime import timezone
 from pathlib import Path
 
+LLM_BACKENDS = ["ollama", "mlc"]
+LLM_BACKEND_PROCESS_FILTER = {
+    "ollama": r"(o|O)llama",
+    "mlc": r"mlc_llm",
+}
 
 class Profiler:
     def __init__(
@@ -31,7 +37,7 @@ class Profiler:
         power_output_path=None,
         interval=1000, # ms
         capture_stdout=False,
-        include_ollama=False,
+        llm_backend=None,
         ollama_model_id=None,
     ):
         self.target_script = target_script
@@ -40,7 +46,11 @@ class Profiler:
         self.power_output_path = power_output_path
         self.interval = interval
         self.capture_stdout = capture_stdout
-        self.include_ollama = include_ollama
+
+        if llm_backend is not None:
+            assert llm_backend in LLM_BACKENDS and llm_backend in LLM_BACKEND_PROCESS_FILTER
+        self.llm_backend = llm_backend
+        self.llm_backend_filter = LLM_BACKEND_PROCESS_FILTER.get(llm_backend, None)
         self.ollama_model_id = ollama_model_id
 
         self.glances_process = None
@@ -113,14 +123,14 @@ class Profiler:
             self.glances_tmp_file = tmp.name
         plugins = "cpu,gpu,mem,memswap,sensors,network,diskio,processlist"
         with open(self.glances_tmp_file, "w") as f:
+            backend_filter = f"|.*{self.llm_backend_filter}.*" if self.llm_backend_filter else ""
             self.glances_process = subprocess.Popen(
                 [
                     "glances",
                     "--stdout-json",
                     plugins,
                     "--process-filter",
-                    self.process_filter
-                    + ("|.*(o|O)llama.*" if self.include_ollama else ""),
+                    self.process_filter + backend_filter,
                     "--time",
                     str(self.interval / 1000),
                     "--disable-check-update",
@@ -245,8 +255,18 @@ class Profiler:
             self.power_process = None
         print("Power measurement stopped")
 
-    def should_include_process(self, pid, name):
-        return pid in self.target_pids or (self.include_ollama and "ollama" in name.lower())
+    def should_include_process(self, process):
+        if process["status"] == "Z": # Zombie
+            return False
+        if process["pid"] in self.target_pids:
+            return True
+        if self.llm_backend is not None:
+            if self.llm_backend == "ollama":
+                target = process["name"]
+            elif self.llm_backend == "mlc":
+                target = " ".join(process["cmdline"])
+            return bool(re.search(self.llm_backend_filter, target))
+        return False
 
     def save_jsonl(self, lines, path_name):
         path = Path(path_name)
@@ -266,17 +286,13 @@ class Profiler:
 
         # Filter out processes that are not relevant
         for l in logs:
-            l["processlist"] = [
-                p for p in l["processlist"]
-                if self.should_include_process(p["pid"], p["name"])
-                and p["status"] != "Z" # Zombie
-            ]
-        # Filter out logs that do not include target processes and Ollama
+            l["processlist"] = [p for p in l["processlist"] if self.should_include_process(p)]
+        # Filter out logs that do not include target processes and llm backend
         logs = [l for l in logs if len(l["processlist"]) > 0]
         valid_len = len(logs)
-        # We don't need Ollama after the target script ends
+        # We don't need llm backend after the target script ends
         for l in reversed(logs):
-            if any([p["pid"] in self.target_pids for p in l["processlist"]]):
+            if any(p["pid"] in self.target_pids for p in l["processlist"]):
                 break
             valid_len -= 1
         logs = logs[:valid_len]
@@ -366,6 +382,7 @@ sudo python -m profiler.profile \\
 --power_output_path ../logs/smol_ollama_qwen3_1.7b_compressed_stream/smolagent_powermetrics.jsonl \\
 --frequency 100 \\
 --capture_stdout \\
+--llm_backend ollama \\
 --ollama_model_id ollama_chat/qwen3:8b
 """
 
@@ -380,7 +397,7 @@ sudo python -m profiler.profile \\
     parser.add_argument("--power_output_path", type=str, default=None, help="Path to save the processed power profile log in JSONL format.")
     parser.add_argument("--interval", type=int, default=1000, help="Samples resource metrics every <interval> milliseconds")
     parser.add_argument("--capture_stdout", action=argparse.BooleanOptionalAction, help="Print the output of the agent to stdout.")
-    parser.add_argument("--include_ollama", action=argparse.BooleanOptionalAction, help="Include Ollama in profiling.")
+    parser.add_argument("--llm_backend", type=str, default=None, choices=LLM_BACKENDS, help="LLM backend to include in profiling results.")
     parser.add_argument("--ollama_model_id", type=str, default=None, help="If specified, preload Ollama with the model.")
     
     args = parser.parse_args()
@@ -399,7 +416,7 @@ sudo python -m profiler.profile \\
         power_output_path=args.power_output_path,
         interval=args.interval,
         capture_stdout=args.capture_stdout,
-        include_ollama=args.include_ollama,
+        llm_backend=args.llm_backend,
         ollama_model_id=args.ollama_model_id,
     )
     success = profiler.start_profiling()
