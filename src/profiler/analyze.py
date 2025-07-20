@@ -26,6 +26,16 @@ DEVICE_TYPE_APPLE_LAPTOP = "apple_laptop"
 DEVICE_TYPE_JETSON = "jetson"
 FIRST_TOKEN_TS = "first_token_ts"
 
+def avg_med_std(values, label):
+        return [
+            (f"avg_{label}", values.mean()),
+            (f"med_{label}", values.median()),
+            (f"std_{label}", values.std()),
+        ]
+
+def energy(power, time_diff):
+    return (power * time_diff).sum()
+
 class Analyzer:
     def __init__(
         self,
@@ -877,29 +887,43 @@ Write your short description here:
             ],
             second_metrics_power=False,
         )
-    
+
     def summarize_stats(self):
         df = self.glances_df
         ts = df["timestamp_plot"]
+
         stats = {
             "duration_sec": ts.iloc[-1] - ts.iloc[0],
-            "peak_gpu_mem_gb": df["gpu_mem_plot"].max(),
-            "peak_ram_gb": df["processes_mem_plot"].max(),
-            "peak_gpu_temp_celcius": df["gpu_temp"].max(),
-            "peak_cpu_temp_celcius": df["smctemp_cpu"].max(),
-            "peak_battery_temp_celcius": df["battery_temp"].max(),
-            "battery_charge_drop_pct": np.ptp(df["battery_percent"]),
+            "peak_process_mem_gb": df["processes_mem_plot"].max(),
+            "peak_system_mem_gb": df["mem_used_plot"].max(),
         }
 
-        if self.power_df is not None:
-            time_diff = self.power_df["elapsed_ns"] / SEC_TO_NANOSEC / 3600
-            cpu_energy = self.power_df["cpu_power"] * time_diff
-            gpu_energy = self.power_df["gpu_power"] * time_diff
-            total_energy = self.power_df["combined_power"] * time_diff
-            
-            stats["cpu_energy_spent_mWh"] = cpu_energy.sum()
-            stats["gpu_energy_spent_mWh"] = gpu_energy.sum()
-            stats["total_energy_spent_mWh"] = total_energy.sum()
+        if self.device_type == DEVICE_TYPE_APPLE_LAPTOP:
+            stats.update({
+                "peak_gpu_mem_gb": df["gpu_mem_plot"].max(),
+                "peak_gpu_temp_celcius": df["gpu_temp"].max(),
+                "peak_cpu_temp_celcius": df["smctemp_cpu"].max(),
+                "peak_battery_temp_celcius": df["battery_temp"].max(),
+                "battery_charge_drop_pct": np.ptp(df["battery_percent"]),
+            })
+
+            if self.power_df is not None:
+                time_diff = self.power_df["elapsed_ns"] / SEC_TO_NANOSEC / 3600
+                stats.update({
+                    "cpu_energy_spent_mWh": energy(self.power_df["cpu_power"], time_diff),
+                    "gpu_energy_spent_mWh": energy(self.power_df["gpu_power"], time_diff),
+                    "total_energy_spent_mWh": energy(self.power_df["combined_power"], time_diff),
+                })
+        elif self.device_type == DEVICE_TYPE_JETSON and self.power_df is not None:
+            time_diff = self.power_df["timestamp"] / SEC_TO_NANOSEC / 3600
+            time_diff = time_diff.diff().fillna(0)
+            stats.update({
+                f"{l}_energy_spent_mWh": energy(self.power_df[m], time_diff)
+                    for m, l in self.get_power_metrics()
+            })
+            stats.update({
+                f"peak_{m}_celcius": self.power_df[m].max() for m, _ in self.get_temperature_metrics()
+            })
 
         for k, v in stats.items():
             if type(v) is np.int64:
@@ -939,45 +963,56 @@ Write your short description here:
                 ts = df["timestamp_plot"]
                 df = df[(ts >= start_time) & (ts < end_time)]
                 prefix = (f"{label}_" if label is not None else "")
-                
+
                 metrics = [
                     ("duration_sec", end_time - start_time),
-                    ("avg_processes_cpu_pct", df["processes_cpu_pct"].mean()),
-                    ("avg_ram_gb", df["processes_mem_plot"].mean()),
-                    ("avg_gpu_usage_pct", df["gpu_usage"].mean()),
-                    ("avg_gpu_mem_gb", df["gpu_mem_plot"].mean()),
-                    ("avg_gpu_temp_celcius", df["gpu_temp"].mean()),
-                    ("avg_cpu_temp_celcius", df["smctemp_cpu"].mean()),
-                    ("avg_battery_temp_celcius", df["battery_temp"].mean()),
+                    *avg_med_std(df["processes_cpu_pct"], "process_cpu_pct"),
+                    ("avg_process_mem_gb", df["processes_mem_plot"].mean()),
+                    ("avg_system_mem_gb", df["mem_used_plot"].mean()),
                 ]
-
-                if self.power_df is not None:
-                    power_df = self.power_df
-                    ts = power_df["timestamp_plot"]
-                    power_df = power_df[(ts >= start_time) & (ts < end_time)]
-                    time_diff = power_df["elapsed_ns"] / SEC_TO_NANOSEC / 3600
-                    cpu_power = power_df["cpu_power"]
-                    gpu_power = power_df["gpu_power"]
-                    combined_power = power_df["combined_power"]
-                    
-                    cpu_energy = cpu_power * time_diff
-                    gpu_energy = gpu_power * time_diff
-                    total_energy = combined_power * time_diff
-                    
+                
+                if self.device_type == DEVICE_TYPE_APPLE_LAPTOP:
                     metrics.extend([
-                        ("avg_cpu_power_mW", cpu_power.mean()),
-                        ("med_cpu_power_mW", cpu_power.median()),
-                        ("std_cpu_power_mW", cpu_power.std()),
-                        ("avg_gpu_power_mW", gpu_power.mean()),
-                        ("med_gpu_power_mW", gpu_power.median()),
-                        ("std_gpu_power_mW", gpu_power.std()),
-                        ("avg_combined_power_mW", combined_power.mean()),
-                        ("med_combined_power_mW", combined_power.median()),
-                        ("std_combined_power_mW", combined_power.std()),
-                        ("cpu_energy_spent_mWh", cpu_energy.sum()),
-                        ("gpu_energy_spent_mWh", gpu_energy.sum()),
-                        ("total_energy_spent_mWh", total_energy.sum()),
+                        ("avg_gpu_usage_pct", df["gpu_usage"].mean()),
+                        ("avg_gpu_mem_gb", df["gpu_mem_plot"].mean()),
+                        ("avg_temp_gpu_celcius", df["gpu_temp"].mean()),
+                        ("avg_temp_cpu_celcius", df["smctemp_cpu"].mean()),
+                        ("avg_temp_battery_celcius", df["battery_temp"].mean()),
                     ])
+
+                    if self.power_df is not None:
+                        power_df = self.power_df
+                        ts = power_df["timestamp_plot"]
+                        power_df = power_df[(ts >= start_time) & (ts < end_time)]
+                        time_diff = power_df["elapsed_ns"] / SEC_TO_NANOSEC / 3600
+                        cpu_power = power_df["cpu_power"]
+                        gpu_power = power_df["gpu_power"]
+                        combined_power = power_df["combined_power"]
+                        
+                        metrics.extend([
+                            *avg_med_std(cpu_power, "power_cpu_mW"),
+                            *avg_med_std(gpu_power, "power_gpu_mW"),
+                            *avg_med_std(combined_power, "power_combined_mW"),
+                            ("cpu_energy_spent_mWh", energy(cpu_power, time_diff)),
+                            ("gpu_energy_spent_mWh", energy(gpu_power, time_diff)),
+                            ("total_energy_spent_mWh", energy(combined_power, time_diff)),
+                        ])
+                
+                elif self.device_type == DEVICE_TYPE_JETSON:
+                    if self.power_df is not None:
+                        power_df = self.power_df
+                        ts = power_df["timestamp_plot"]
+                        power_df = power_df[(ts >= start_time) & (ts < end_time)]
+                        time_diff = power_df["timestamp"] / SEC_TO_NANOSEC / 3600
+                        time_diff = time_diff.diff().fillna(0)
+                        energies = [(power_df[m] * time_diff).sum() for m, _ in self.get_power_metrics()]
+
+                        metrics.extend(
+                            [("avg_gpu_usage_pct", power_df["gpu_usage"].mean())] +
+                            [(f"avg_{m}_celcius", power_df[m].mean()) for m, _ in self.get_temperature_metrics()] +
+                            [e for t in [avg_med_std(power_df[m], m) for m, _ in self.get_power_metrics()] for e in t] +
+                            [(f"{l}_energy_spent_mWh", energy(power_df[m], time_diff)) for m, l in self.get_power_metrics()]
+                        )
                 
                 for (k, v) in metrics:
                     stat[prefix + k] = v
@@ -1021,8 +1056,8 @@ Write your short description here:
             self.plot_power_and_temp_metrics()
             self.plot_power_and_battery_metrics()
 
-        # self.summarize_stats()
-        # self.summarize_stats_per_step()
+        self.summarize_stats()
+        self.summarize_stats_per_step()
 
 if __name__ == "__main__":
     example_text = """
