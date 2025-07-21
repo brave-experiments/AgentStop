@@ -25,16 +25,41 @@ LLM = "LLM"
 DEVICE_TYPE_APPLE_LAPTOP = "apple_laptop"
 DEVICE_TYPE_JETSON = "jetson"
 FIRST_TOKEN_TS = "first_token_ts"
+PREFILL_COUNT = "llm.token_count.prompt"
+GENERATION_COUNT = "llm.token_count.completion"
 
-def avg_med_std(values, label):
-        return [
+def avg_med_std(l):
+    res = []
+    for values, label in l:
+        res.extend([
             (f"avg_{label}", values.mean()),
             (f"med_{label}", values.median()),
             (f"std_{label}", values.std()),
-        ]
+        ])
+    return res
 
-def energy(power, time_diff):
-    return (power * time_diff).sum()
+"""
+Approximates total energy usage using trapezoidal integration.
+ts is assumed to be an array of timestamps (nanoseconds).
+If ts_is_elapsed is set to True, ts would be treated as elapsed time.
+power_data is assumed to be an array of tuple (power, label, token_count)
+power is assumed to be an array of floats (milliwatt)
+This is because timestamp can be unevenly spaced and power can fluctuate widely.
+Returns total energy in mWh (equivalent to 3.6 joules)
+"""
+def energy(ts, power_data, ts_is_elapsed=False):
+    assert len(power_data) > 0 and len(ts) == len(power_data[0][0])
+    ts = np.array(ts) / SEC_TO_NANOSEC / 3600
+    if ts_is_elapsed:
+        ts = ts.cumsum()
+
+    res = []
+    for power, label, token_count in power_data:
+        e = np.trapz(np.array(power), x=ts)
+        res.append((f"energy_{label}_mWh", e))
+        if token_count is not None:
+            res.append((f"energy_{label}_mWh_per_token", e / token_count))
+    return res
 
 class Analyzer:
     def __init__(
@@ -303,8 +328,8 @@ Write your short description here:
                 agent_desc = ""
                 token_desc = ""
                 output_msg = attributes.get("output.value", None)
-                input_tokens = attributes.get("llm.token_count.prompt", None)
-                output_tokens = attributes.get("llm.token_count.completion", None)
+                input_tokens = attributes.get(PREFILL_COUNT, None)
+                output_tokens = attributes.get(GENERATION_COUNT, None)
                 prefill_tps = attributes.get("prefill_tps", None)
                 generation_tps = attributes.get("generation_tps", None)
                 
@@ -324,7 +349,11 @@ Write your short description here:
 
                 # Add extra data
                 if FIRST_TOKEN_TS in attributes:
-                    extra_data[FIRST_TOKEN_TS] = (attributes[FIRST_TOKEN_TS] - start_time) / SEC_TO_NANOSEC
+                    extra_data.update({
+                        FIRST_TOKEN_TS: (attributes[FIRST_TOKEN_TS] - start_time) / SEC_TO_NANOSEC,
+                        PREFILL_COUNT: input_tokens,
+                        GENERATION_COUNT: output_tokens,
+                    })
             
             elif kind == "TOOL":
                 if "search" in t["name"].lower():
@@ -891,6 +920,7 @@ Write your short description here:
     def summarize_stats(self):
         df = self.glances_df
         ts = df["timestamp_plot"]
+        pwr_df = self.power_df
 
         stats = {
             "duration_sec": ts.iloc[-1] - ts.iloc[0],
@@ -907,22 +937,20 @@ Write your short description here:
                 "battery_charge_drop_pct": np.ptp(df["battery_percent"]),
             })
 
-            if self.power_df is not None:
-                time_diff = self.power_df["elapsed_ns"] / SEC_TO_NANOSEC / 3600
-                stats.update({
-                    "cpu_energy_spent_mWh": energy(self.power_df["cpu_power"], time_diff),
-                    "gpu_energy_spent_mWh": energy(self.power_df["gpu_power"], time_diff),
-                    "total_energy_spent_mWh": energy(self.power_df["combined_power"], time_diff),
-                })
-        elif self.device_type == DEVICE_TYPE_JETSON and self.power_df is not None:
-            time_diff = self.power_df["timestamp"] / SEC_TO_NANOSEC / 3600
-            time_diff = time_diff.diff().fillna(0)
+            if pwr_df is not None:
+                power_stats = [
+                    (pwr_df["cpu_power"], "cpu", None),
+                    (pwr_df["gpu_power"], "gpu", None),
+                    (pwr_df["combined_power"], "total", None),
+                ]
+                for k, v in energy(pwr_df["elapsed_ns"], power_stats, ts_is_elapsed=True):
+                    stats[k] = v
+        elif self.device_type == DEVICE_TYPE_JETSON and pwr_df is not None:
+            power_stats = [(pwr_df[m], l, None) for m, l in self.get_power_metrics()]
+            for k, v in energy(pwr_df["timestamp"], power_stats):
+                stats[k] = v
             stats.update({
-                f"{l}_energy_spent_mWh": energy(self.power_df[m], time_diff)
-                    for m, l in self.get_power_metrics()
-            })
-            stats.update({
-                f"peak_{m}_celcius": self.power_df[m].max() for m, _ in self.get_temperature_metrics()
+                f"peak_{m}_celcius": pwr_df[m].max() for m, _ in self.get_temperature_metrics()
             })
 
         for k, v in stats.items():
@@ -941,13 +969,14 @@ Write your short description here:
 
         for step in agent_trace:
             start_time, end_time = step["start_time"], step["end_time"]
-            start_end = [(start_time, end_time, None)]
+            start_end = [(start_time, end_time, None, None)]
 
-            if step["kind"] == LLM and FIRST_TOKEN_TS in step["extra_data"]:
-                first_token_ts = step["extra_data"][FIRST_TOKEN_TS]
+            extra_data = step.get("extra_data", None)
+            if step["kind"] == LLM and FIRST_TOKEN_TS in extra_data:
+                first_token_ts = extra_data[FIRST_TOKEN_TS]
                 start_end.extend([
-                    (start_time, first_token_ts, "prefill"),
-                    (first_token_ts, end_time, "generation"),
+                    (start_time, first_token_ts, "prefill", extra_data[PREFILL_COUNT]),
+                    (first_token_ts, end_time, "generation", extra_data[GENERATION_COUNT]),
                 ])
 
             stat = {
@@ -958,7 +987,7 @@ Write your short description here:
                 "desc": step["desc"],
             }
 
-            for (start_time, end_time, label) in start_end:
+            for (start_time, end_time, label, token_count) in start_end:
                 df = self.glances_df
                 ts = df["timestamp_plot"]
                 df = df[(ts >= start_time) & (ts < end_time)]
@@ -966,7 +995,7 @@ Write your short description here:
 
                 metrics = [
                     ("duration_sec", end_time - start_time),
-                    *avg_med_std(df["processes_cpu_pct"], "process_cpu_pct"),
+                    *avg_med_std([(df["processes_cpu_pct"], "process_cpu_pct")]),
                     ("avg_process_mem_gb", df["processes_mem_plot"].mean()),
                     ("avg_system_mem_gb", df["mem_used_plot"].mean()),
                 ]
@@ -984,35 +1013,39 @@ Write your short description here:
                         power_df = self.power_df
                         ts = power_df["timestamp_plot"]
                         power_df = power_df[(ts >= start_time) & (ts < end_time)]
-                        time_diff = power_df["elapsed_ns"] / SEC_TO_NANOSEC / 3600
                         cpu_power = power_df["cpu_power"]
                         gpu_power = power_df["gpu_power"]
                         combined_power = power_df["combined_power"]
-                        
+
+                        power_stats = [
+                            (cpu_power, "power_cpu_mW"),
+                            (gpu_power, "power_gpu_mW"),
+                            (combined_power, "power_combined_mW")
+                        ]
+                        energy_stats = [
+                            (cpu_power, "cpu", token_count),
+                            (gpu_power, "gpu", token_count),
+                            (combined_power, "total", token_count),
+                        ]
+
                         metrics.extend([
-                            *avg_med_std(cpu_power, "power_cpu_mW"),
-                            *avg_med_std(gpu_power, "power_gpu_mW"),
-                            *avg_med_std(combined_power, "power_combined_mW"),
-                            ("cpu_energy_spent_mWh", energy(cpu_power, time_diff)),
-                            ("gpu_energy_spent_mWh", energy(gpu_power, time_diff)),
-                            ("total_energy_spent_mWh", energy(combined_power, time_diff)),
+                            *avg_med_std(power_stats),
+                            *energy(power_df["elapsed_ns"], energy_stats, ts_is_elapsed=True),
                         ])
                 
-                elif self.device_type == DEVICE_TYPE_JETSON:
-                    if self.power_df is not None:
-                        power_df = self.power_df
-                        ts = power_df["timestamp_plot"]
-                        power_df = power_df[(ts >= start_time) & (ts < end_time)]
-                        time_diff = power_df["timestamp"] / SEC_TO_NANOSEC / 3600
-                        time_diff = time_diff.diff().fillna(0)
-                        energies = [(power_df[m] * time_diff).sum() for m, _ in self.get_power_metrics()]
-
-                        metrics.extend(
-                            [("avg_gpu_usage_pct", power_df["gpu_usage"].mean())] +
-                            [(f"avg_{m}_celcius", power_df[m].mean()) for m, _ in self.get_temperature_metrics()] +
-                            [e for t in [avg_med_std(power_df[m], m) for m, _ in self.get_power_metrics()] for e in t] +
-                            [(f"{l}_energy_spent_mWh", energy(power_df[m], time_diff)) for m, l in self.get_power_metrics()]
-                        )
+                elif self.device_type == DEVICE_TYPE_JETSON and self.power_df is not None:
+                    power_df = self.power_df
+                    ts = power_df["timestamp_plot"]
+                    power_df = power_df[(ts >= start_time) & (ts < end_time)]
+                    energy_stats = [
+                        (power_df[m], l, token_count) for m, l in self.get_power_metrics()
+                    ]
+                    metrics.extend(
+                        [("avg_gpu_usage_pct", power_df["gpu_usage"].mean())] +
+                        [(f"avg_{m}_celcius", power_df[m].mean()) for m, _ in self.get_temperature_metrics()] +
+                        [e for t in [avg_med_std(power_df[m], m) for m, _ in self.get_power_metrics()] for e in t] +
+                        energy(power_df["timestamp"], energy_stats)
+                    )
                 
                 for (k, v) in metrics:
                     stat[prefix + k] = v
