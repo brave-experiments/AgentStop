@@ -618,13 +618,31 @@ class WebToolCallingAgent(WebCodeAgent):
         )
 
 
+class WebManagedAgent(WebCodeAgent):
+    def init_agent(self):
+        search_agent = ToolCallingAgent(
+            tools=self.get_tools(),
+            model=self.model,
+            name="search_agent",
+            description="This is an agent that can do web search and retrieve web pages.",
+            instructions=NO_THINK if self.should_add_no_think() else None,
+        )
+        self.agent = CodeAgent(
+            tools=[],
+            model=self.model,
+            managed_agents=[search_agent],
+        )
+
+
 class AgentType:
     CODE = "code"
     TOOL = "tool"
+    MANAGED = "managed"
 
 AGENT_MAP = {
     AgentType.CODE: WebCodeAgent,
     AgentType.TOOL: WebToolCallingAgent,
+    AgentType.MANAGED: WebManagedAgent,
 }
 
 
