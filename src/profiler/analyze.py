@@ -27,6 +27,9 @@ DEVICE_TYPE_JETSON = "jetson"
 FIRST_TOKEN_TS = "first_token_ts"
 PREFILL_COUNT = "llm.token_count.prompt"
 GENERATION_COUNT = "llm.token_count.completion"
+CACHED_COUNT = "cached_count"
+PREFILL_TPS = "prefill_tps"
+GENERATION_TPS = "generation_tps"
 
 def avg_med_std(l):
     res = []
@@ -79,7 +82,7 @@ class Analyzer:
         with Path(glances_log_path).open("r", encoding="utf-8") as f:
             self.glances_log = [json.loads(l) for l in f if l.strip()]
         with Path(agent_trace_path).open("r", encoding="utf-8") as f:
-            self.agent_trace = json.load(f)
+            self.agent_trace = sorted(json.load(f), key=lambda t: t["start_time"])
         
         self.power_df = None
         if power_log_path is not None:
@@ -294,8 +297,9 @@ Write your short description here:
 
         id_to_trace = {t["span_id"]: t for t in self.agent_trace}
         
+        prefix = []
+        base_prefill_tps = None
         start_time = self.glances_df["timestamp"].iloc[0]
-
         processed = []
         for t in tqdm(self.agent_trace):
             if (t["end_time"] - t["start_time"]) / SEC_TO_NANOSEC < 0.1:
@@ -327,32 +331,50 @@ Write your short description here:
                 # Create description text for span
                 agent_desc = ""
                 token_desc = ""
+                input_msg = attributes.get("input.value", None)
                 output_msg = attributes.get("output.value", None)
                 input_tokens = attributes.get(PREFILL_COUNT, None)
                 output_tokens = attributes.get(GENERATION_COUNT, None)
-                prefill_tps = attributes.get("prefill_tps", None)
-                generation_tps = attributes.get("generation_tps", None)
+                pf_tps = attributes.get(PREFILL_TPS, None)
+                gen_tps = attributes.get(GENERATION_TPS, None)
+
+                if pf_tps is not None and input_msg is not None:
+                    input_msg = str(json.loads(input_msg)["messages"])
+                    pf_time = input_tokens * 1.0 / pf_tps
+                    cached_tokens = 0
+
+                    if len(prefix) == 0:
+                        prefix.append({"text": input_msg, "tokens": input_tokens})
+                        base_prefill_tps = pf_tps
+                    elif pf_tps > base_prefill_tps * 1.1: # Likely cached
+                        for p in prefix:
+                            if input_msg.startswith(p["text"][:-1]): # Ignore the closing ]
+                                cached_tokens = p["tokens"]
+                                pf_tps = (input_tokens - cached_tokens) / pf_time
+                                p["text"] = input_msg
+                                p["tokens"] = input_tokens
+                                break
+                    else:
+                        prefix.append({"text": input_msg, "tokens": input_tokens})
                 
                 if output_msg is not None and not is_parent_of_LLM:
                     agent_desc = self.describe_agent_action(output_msg)
                 if input_tokens is not None and output_tokens is not None:
-                    token_desc = f"Tkn: {input_tokens} in, {output_tokens} out"
-                if prefill_tps is not None and generation_tps is not None:
-                    prefill_tps = round(prefill_tps, 1)
-                    generation_tps = round(generation_tps, 1)
-                    desc_str = f"{prefill_tps}/s pf, {generation_tps}/s gn"
-                    if len(token_desc) > 0:
-                        token_desc += f", {desc_str}"
+                    if pf_tps is not None and gen_tps is not None:
+                        token_desc = f"Tkn: {input_tokens} in ({cached_tokens} ca.) ({round(pf_tps, 1)}/s), {output_tokens} out ({round(gen_tps, 1)}/s)"
                     else:
-                        token_desc = f"Tkn: {desc_str}"
-                desc = f"{agent_desc}\n({token_desc})"
+                        token_desc = f"Tkn: {input_tokens} in, {output_tokens} out"
+                desc = f"{agent_desc}\n[{token_desc}]".strip()
 
                 # Add extra data
                 if FIRST_TOKEN_TS in attributes:
                     extra_data.update({
                         FIRST_TOKEN_TS: (attributes[FIRST_TOKEN_TS] - start_time) / SEC_TO_NANOSEC,
                         PREFILL_COUNT: input_tokens,
+                        CACHED_COUNT: cached_tokens,
                         GENERATION_COUNT: output_tokens,
+                        PREFILL_TPS: pf_tps,
+                        GENERATION_TPS: gen_tps,
                     })
             
             elif kind == "TOOL":
@@ -387,8 +409,8 @@ Write your short description here:
         self.processed_agent_trace = processed
 
 
-    def get_sorted_topmost_spans(self):
-        spans = sorted(self.processed_agent_trace, key=lambda t: t["start_time"])
+    def get_topmost_spans(self):
+        spans = self.processed_agent_trace
         top_spans = []
         i = 0
         while i < len(spans):
@@ -480,7 +502,7 @@ Write your short description here:
 
         # Plot stages
         grouped_agent_trace = [
-            sorted([t for t in agent_trace if t["level"] == level], key=lambda t: t["start_time"])
+            [t for t in agent_trace if t["level"] == level]
             for level in range(max_level + 1)
         ]
         for level_group in grouped_agent_trace:
@@ -514,7 +536,7 @@ Write your short description here:
 
     def plot_trace_execution_timeline_summarized(self, ax, other_axes=None):
         # Color
-        agent_trace = self.get_sorted_topmost_spans()
+        agent_trace = self.get_topmost_spans()
         stage_names = list({t["name"] for t in agent_trace})
         palette = sns.color_palette("Set2", len(stage_names) + 2)
         stage_names_ordered = [
@@ -565,7 +587,7 @@ Write your short description here:
             "kind": other_label,
         }
         grouped_agent_trace = [
-            sorted([t for t in agent_trace if t["kind"] == kind], key=lambda t: t["start_time"])
+            [t for t in agent_trace if t["kind"] == kind]
             for kind in [LLM, "TOOL", "CHAIN"]
         ]
         grouped_agent_trace.append([custom_init_trace, custom_end_trace])
@@ -964,28 +986,37 @@ Write your short description here:
             f.write(stats_txt)
 
     def summarize_stats_per_step(self):
-        agent_trace = self.get_sorted_topmost_spans()
+        agent_trace = self.get_topmost_spans()
         stats = []
 
         for step in agent_trace:
             start_time, end_time = step["start_time"], step["end_time"]
             start_end = [(start_time, end_time, None, None)]
-
             extra_data = step.get("extra_data", None)
-            if step["kind"] == LLM and FIRST_TOKEN_TS in extra_data:
-                first_token_ts = extra_data[FIRST_TOKEN_TS]
-                start_end.extend([
-                    (start_time, first_token_ts, "prefill", extra_data[PREFILL_COUNT]),
-                    (first_token_ts, end_time, "generation", extra_data[GENERATION_COUNT]),
-                ])
-
             stat = {
                 "step_name": step["name"],
                 "kind": step["kind"],
-                "start_time": step["start_time"],
-                "end_time": step["end_time"],
+                "start_time": start_time,
+                "end_time": end_time,
                 "desc": step["desc"],
             }
+
+            if step["kind"] == LLM and FIRST_TOKEN_TS in extra_data:
+                first_token_ts = extra_data[FIRST_TOKEN_TS]
+                prefill_count = extra_data[PREFILL_COUNT]
+                gen_count = extra_data[GENERATION_COUNT]
+                cached_count = extra_data[CACHED_COUNT]
+                start_end.extend([
+                    (start_time, first_token_ts, "prefill", prefill_count - cached_count),
+                    (first_token_ts, end_time, "generation", gen_count),
+                ])
+                stat.update({
+                    PREFILL_TPS: extra_data[PREFILL_TPS],
+                    GENERATION_TPS: extra_data[GENERATION_TPS],
+                    PREFILL_COUNT: prefill_count,
+                    CACHED_COUNT: cached_count,
+                    GENERATION_COUNT: gen_count,
+                })
 
             for (start_time, end_time, label, token_count) in start_end:
                 df = self.glances_df
