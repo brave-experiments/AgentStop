@@ -329,6 +329,7 @@ class BasicSmolAgent(WebAgent):
         api_key=None,
         api_base=None,
         thinking=False,
+        planning_interval=None,
         **kwargs,
     ):
         super().__init__(model_name, model_id, model_type, stream=stream, **kwargs)
@@ -346,6 +347,7 @@ class BasicSmolAgent(WebAgent):
             not self.thinking
         )
         self.tools = self.init_tools()
+        self.planning_interval = planning_interval
         self.init_agent()
         
     def init_model(
@@ -424,6 +426,7 @@ class WebCodeAgent(BasicSmolAgent):
         self.agent = CodeAgent(
             tools=self.tools,
             model=self.model,
+            planning_interval=self.planning_interval,
             instructions=NO_THINK if self.should_add_no_think else None,
         )
 
@@ -441,7 +444,7 @@ class WebCodeAgent(BasicSmolAgent):
                 extract_format="WIKI",
                 compression_ratio=self.compression_ratio,
                 add_no_think=add_no_think,
-                max_output_length=5000,
+                max_output_length=10000,
             ),
             CustomVisitWebpageTool(
                 compression_ratio=self.compression_ratio,
@@ -456,6 +459,7 @@ class WebToolCallingAgent(WebCodeAgent):
         self.agent = ToolCallingAgent(
             tools=self.tools,
             model=self.model,
+            planning_interval=self.planning_interval,
             instructions=NO_THINK if self.should_add_no_think else None,
         )
 
@@ -473,6 +477,7 @@ class WebManagedAgent(WebCodeAgent):
             tools=[],
             model=self.model,
             managed_agents=[search_agent],
+            planning_interval=self.planning_interval,
             instructions=NO_THINK if self.should_add_no_think else None,
         )
 
@@ -545,6 +550,9 @@ python -m agents.web.smol_agents \\
     parser.add_argument(
         "--planning_interval", type=int, default=None, help="Planning interval."
     )
+    parser.add_argument(
+        "--max_steps", type=int, default=10, help="Maximum number of steps for the agent."
+    )
     parser.add_argument("--api_base", type=str, default=None, help="API base for LiteLLM.")
     parser.add_argument(
         "--compression_ratio",
@@ -562,7 +570,8 @@ python -m agents.web.smol_agents \\
         api_key=os.getenv(args.api_key_env) if args.api_key_env else "FAKE_KEY",
         api_base=args.api_base,
         compression_ratio=args.compression_ratio,
+        planning_interval=args.planning_interval,
     )
     if args.trace_path is not None:
         agent.enable_tracing(args.trace_path)
-    agent.run(args.prompt, max_steps=10)
+    print(agent.run(args.prompt, max_steps=args.max_steps))

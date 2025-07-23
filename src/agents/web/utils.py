@@ -1,5 +1,6 @@
 import argparse
 import json
+import pandas as pd
 import pymupdf
 import pymupdf4llm
 import re
@@ -128,8 +129,8 @@ class CustomTool():
 
     def forward(self, query):
         if self.no_duplicate and query in self.input_history:
-            res = f"Error: The query <query>{query[:64]}{'...' if len(query) > 64 else ''}</query> is duplicate." \
-                " There's no new information that you have not already seen. Do not repeat this query."
+            res = f"Error: You have already tried this query. Please check the results of your previous queries. " \
+                " Do not repeat this query. Please try a different query; otherwise, you will not get any results."
         else:
             self.input_history.add(query)
             res = self._forward(query)
@@ -230,23 +231,51 @@ class CustomApiWebSearchTool(CustomTool, ApiWebSearchTool):
 
 
 class CustomWikipediaSearchTool(CustomTool, WikipediaSearchTool):
-    def __init__(self, *args, max_output_length=10000, **kwargs):
+    def __init__(self, *args, max_output_length=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.max_output_length = max_output_length
 
     def _forward(self, query):
-        res = WikipediaSearchTool.forward(self, query)
-        if self.max_output_length is not None and len(res) > self.max_output_length:
-            return res[:max_output_length]
-        else:
-            return res
+        try:
+            page = self.wiki.page(query)
+            if not page.exists():
+                return f"No Wikipedia page found for '{query}'. Try a different query."
+
+            title = page.title
+            url = page.fullurl
+
+            if self.content_type == "summary":
+                text = page.summary
+            elif self.content_type == "text":
+                text = page.text
+            else:
+                return "⚠️ Invalid `content_type`. Use either 'summary' or 'text'."
+
+            try:
+                tables = pd.read_html(url)
+            except:
+                tables = []
+            if len(tables) > 0:
+                joined_table = "\n\n".join(t.to_markdown() for t in tables)
+                table = f"\n\n**Tables:**\n\n{joined_table}\n\n"
+            else:
+                table = ""
+
+            if self.max_output_length is not None and len(text) > self.max_output_length:
+                text = text[:self.max_output_length]
+
+            return f"✅ **Wikipedia Page:** {title}\n\n**Content:** {text}\n\n{table}🔗 **Read more:** {url}"
+
+        except Exception as e:
+            return f"Error fetching Wikipedia summary: {str(e)}"
+
 
 class CustomVisitWebpageTool(CustomTool, VisitWebpageTool):
     """
         Features:
         - Better user-agent
         - Ability to convert pdf to markdown
-        - Automatically switches to Wikipedia tool if url is for Wikipedia
+        - Automatically switches to Wikipedia API if url is for Wikipedia
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -257,7 +286,6 @@ class CustomVisitWebpageTool(CustomTool, VisitWebpageTool):
             content_type="text",
             extract_format="WIKI",
             compression_ratio=self.compression_ratio,
-            add_no_think=self.add_no_think,
             max_output_length=self.max_output_length,
         )
 
