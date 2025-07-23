@@ -1,21 +1,10 @@
 import argparse
 import json
 import os
-import pymupdf
-import pymupdf4llm
-import re
-import requests
-import tempfile
 import time
-import torch
 
-from agents.web.utils import WebAgent, get_custom_arg_parser, NO_THINK
-from bs4 import BeautifulSoup
 from dataclasses import asdict, is_dataclass
 from dotenv import load_dotenv
-from fake_useragent import UserAgent
-from llmlingua import PromptCompressor
-from markdownify import markdownify
 from openinference.instrumentation import get_attributes_from_context
 from openinference.instrumentation.helpers import safe_json_dumps
 from openinference.instrumentation.smolagents import SmolagentsInstrumentor
@@ -29,18 +18,12 @@ from openinference.instrumentation.smolagents._wrappers import (
     _ModelWrapper,
 )
 from opentelemetry import trace
-from requests.exceptions import RequestException
 from smolagents import (
-    ApiWebSearchTool,
     CodeAgent,
     LiteLLMModel,
     MLXModel,
     MultiStepAgent,
-    Tool,
     ToolCallingAgent,
-    VisitWebpageTool,
-    WebSearchTool,
-    WikipediaSearchTool,
 )
 from smolagents.memory import PlanningStep
 from smolagents.models import (
@@ -53,6 +36,15 @@ from smolagents.models import (
 )
 from smolagents.monitoring import TokenUsage
 from typing import Any, Callable, Mapping, Tuple
+from .utils import (
+    CustomApiWebSearchTool,
+    CustomWebSearchTool,
+    CustomWikipediaSearchTool,
+    CustomVisitWebpageTool,
+    WebAgent,
+    get_custom_arg_parser,
+    NO_THINK,
+)
 from uuid import uuid4
 from wrapt import wrap_function_wrapper
 
@@ -327,167 +319,6 @@ class CustomSmolagentsInstrumentor(SmolagentsInstrumentor):
             setattr(LiteLLMModel, "generate", self._original_model_generate_methods[LiteLLMModel])
 
 
-class TextCompressionTool(Tool):
-    name = "text_compression"
-    description = "Compresses texts like web search results and returns a string for the compressed text."
-    inputs = {"text": {"type": "string", "description": "The text to compress."}}
-    output_type = "string"
-
-    def __init__(
-        self,
-        model_name="microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
-        device=None,
-        compression_ratio=0.7,
-    ):
-        assert (type(compression_ratio) is float and 0.0 < compression_ratio <= 1.0), "Invalid compression ratio"
-
-        super().__init__()
-        if compression_ratio < 1.0:
-            if device is None:
-                if torch.cuda.is_available():
-                    device = "cuda"
-                elif torch.backends.mps.is_available():
-                    device = "mps"
-                else:
-                    device = "cpu"
-            self.compressor = PromptCompressor(
-                model_name=model_name,
-                device_map=device,
-                use_llmlingua2=True
-            )
-        self.compression_ratio = compression_ratio
-
-    def forward(self, text):
-        if self.compression_ratio == 1.0:
-            return text
-        res = self.compressor.compress_prompt(
-            text,
-            rate=self.compression_ratio,
-            force_tokens=['#', '\n', ',', '.', '-', '?'],
-            force_reserve_digit=True,
-            drop_consecutive=True,
-        )
-        return res["compressed_prompt"]
-
-
-class CustomToolWithCompression():
-    """Compress results and add /no_think for Qwen"""
-    def __init__(self, *args, compression_ratio=1.0, add_no_think=False, **kwargs):
-        self.compress_tool = TextCompressionTool(compression_ratio=compression_ratio)
-        self.add_no_think = add_no_think
-        super().__init__(*args, **kwargs)
-
-    def forward(self, query):
-        res = self._forward(query)
-        res = self.compress_tool.forward(res)
-        if self.add_no_think:
-            res = f"{res} {NO_THINK}"
-        return res
-
-    def _forward(self, query):
-        raise NotImplementedError("This method must be implemented!")
-
-
-class CustomWebSearchTool(CustomToolWithCompression, WebSearchTool):
-    """Compress each search result individually"""
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def forward(self, query):
-        res = self._forward(query)
-        if self.add_no_think:
-            res = f"{res} {NO_THINK}"
-        return res
-
-    def _forward(self, query):
-        results = self.search(query)
-        if len(results) == 0:
-            return "No results found! Try a less restrictive/shorter query."
-
-        res = "## Search Results\n\n" + "\n\n".join([
-            f"[{r['title']}]({r['link']})\n{self.compress_tool.forward(r['description'])}"
-            for r in results
-        ])
-        return res
-
-
-class CustomApiWebSearchTool(CustomToolWithCompression, ApiWebSearchTool):
-    """Compress each search result individually"""
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def forward(self, query):
-        res = self._forward(query)
-        if self.add_no_think:
-            res = f"{res} {NO_THINK}"
-        return res
-
-    def _forward(self, query):
-        return ApiWebSearchTool.forward(self, query)
-
-    def extract_results(self, data: dict) -> list:
-        results = []
-        for result in data.get("web", {}).get("results", []):
-            desc = result.get("description", "")
-            if len(desc) > 0:
-                desc = BeautifulSoup(desc, "html.parser").get_text()
-                desc = self.compress_tool.forward(desc)
-            results.append(
-                {"title": result["title"], "url": result["url"], "description": desc}
-            )
-        return results
-
-
-class CustomWikipediaSearchTool(CustomToolWithCompression, WikipediaSearchTool):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def _forward(self, query):
-        return WikipediaSearchTool.forward(self, query)
-
-
-class CustomVisitWebpageTool(CustomToolWithCompression, VisitWebpageTool):
-    """Has better user-agent and ability to convert pdf to markdown"""
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.ua = UserAgent(platforms="desktop").random
-
-    def forward(self, url):
-        return super().forward(url)
-
-    def _forward(self, url):
-        try:
-            headers = {
-                "User-Agent": self.ua,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Referer": "https://www.google.com/",
-            }
-            response = requests.get(url, headers=headers, timeout=5)
-            response.raise_for_status()  # Raise an exception for bad status codes
-
-            content_type = response.headers.get("Content-Type", "").lower()
-
-            if "application/pdf" in content_type or url.lower().endswith(".pdf"):
-                doc = pymupdf.open(stream=response.content, filetype="pdf")
-                markdown_content = pymupdf4llm.to_markdown(doc).strip()
-            elif "text/html" in content_type or "xml" in content_type:
-                markdown_content = markdownify(response.text).strip()
-            else:
-                return f"This content type is not supported: {content_type}"
-
-            # Clean up extra newlines
-            markdown_content = re.sub(r"\n{3,}", "\n\n", markdown_content)
-            return self._truncate_content(markdown_content, self.max_output_length)
-        
-        except requests.exceptions.Timeout:
-            return "The request timed out. Please try again later or check the URL."
-        except RequestException as e:
-            return f"Error fetching the webpage: {str(e)}"
-        except Exception as e:
-            return f"An unexpected error occurred: {str(e)}"
-
-
 class BasicSmolAgent(WebAgent):
     def __init__(
         self,
@@ -509,6 +340,12 @@ class BasicSmolAgent(WebAgent):
             api_base=api_base,
             thinking=thinking
         )
+        self.should_add_no_think = (
+            self.model_type == "litellm" and
+            "qwen3" in self.model_id.lower() and
+            not self.thinking
+        )
+        self.tools = self.init_tools()
         self.init_agent()
         
     def init_model(
@@ -517,7 +354,7 @@ class BasicSmolAgent(WebAgent):
         model_type,
         api_key=None,
         api_base=None,
-        max_tokens=40000, # Qwen 3's context length limit
+        max_tokens=40960, # Ollama Qwen 3's context length limit
         thinking=False,
     ):
         if model_type == "mlx":
@@ -551,8 +388,12 @@ class BasicSmolAgent(WebAgent):
     def init_agent(self):
         raise NotImplementedError("Agents must be specified.")
     
-    def get_tools(self):
-        raise NotImplementedError("Tools must be specified.")
+    def init_tools(self):
+        return []
+
+    def reset_tools(self):
+        for t in self.tools:
+            t.reset_history()
 
     def should_add_no_think(self):
         return (
@@ -581,13 +422,13 @@ class WebCodeAgent(BasicSmolAgent):
 
     def init_agent(self):
         self.agent = CodeAgent(
-            tools=self.get_tools(),
+            tools=self.tools,
             model=self.model,
-            instructions=NO_THINK if self.should_add_no_think() else None,
+            instructions=NO_THINK if self.should_add_no_think else None,
         )
 
-    def get_tools(self):
-        add_no_think = self.should_add_no_think()
+    def init_tools(self):
+        add_no_think = self.should_add_no_think
         return [
             CustomApiWebSearchTool(
                 compression_ratio=self.compression_ratio,
@@ -596,10 +437,11 @@ class WebCodeAgent(BasicSmolAgent):
             CustomWikipediaSearchTool(
                 user_agent="MyWebAgent (dpham@brave.com)",
                 language="en",
-                content_type="summary",
+                content_type="text",
                 extract_format="WIKI",
                 compression_ratio=self.compression_ratio,
                 add_no_think=add_no_think,
+                max_output_length=5000,
             ),
             CustomVisitWebpageTool(
                 compression_ratio=self.compression_ratio,
@@ -612,25 +454,26 @@ class WebCodeAgent(BasicSmolAgent):
 class WebToolCallingAgent(WebCodeAgent):
     def init_agent(self):
         self.agent = ToolCallingAgent(
-            tools=self.get_tools(),
+            tools=self.tools,
             model=self.model,
-            instructions=NO_THINK if self.should_add_no_think() else None,
+            instructions=NO_THINK if self.should_add_no_think else None,
         )
 
 
 class WebManagedAgent(WebCodeAgent):
     def init_agent(self):
         search_agent = ToolCallingAgent(
-            tools=self.get_tools(),
+            tools=self.tools,
             model=self.model,
             name="search_agent",
             description="This is an agent that can do web search and retrieve web pages.",
-            instructions=NO_THINK if self.should_add_no_think() else None,
+            instructions=NO_THINK if self.should_add_no_think else None,
         )
         self.agent = CodeAgent(
             tools=[],
             model=self.model,
             managed_agents=[search_agent],
+            instructions=NO_THINK if self.should_add_no_think else None,
         )
 
 

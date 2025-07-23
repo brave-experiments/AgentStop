@@ -1,11 +1,29 @@
 import argparse
 import json
+import pymupdf
+import pymupdf4llm
+import re
+import requests
+import torch
 
+from bs4 import BeautifulSoup
+from fake_useragent import UserAgent
+from llmlingua import PromptCompressor
+from markdownify import markdownify
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.sdk.resources import Resource
 from pathlib import Path
+from requests.exceptions import RequestException
+from smolagents import (
+    ApiWebSearchTool,
+    Tool,
+    VisitWebpageTool,
+    WebSearchTool,
+    WikipediaSearchTool,
+)
+from urllib.parse import unquote
 
 NO_THINK = "/no_think"
 
@@ -83,6 +101,206 @@ class WebAgent:
 
     def run(self, *args, **kwargs):
         raise NotImplementedError("You need to implement this method.")
+
+
+class CustomTool():
+    """
+        - Check for duplidate input
+        - Compress results
+        - Add /no_think to disable thinking
+    """
+    def __init__(
+        self,
+        *args,
+        no_duplicate=True,
+        compression_ratio=1.0,
+        compress_final_output=True,
+        add_no_think=False,
+        **kwargs
+    ):
+        self.no_duplicate = no_duplicate
+        self.input_history = set()
+        self.compress_tool = TextCompressionTool(compression_ratio=compression_ratio)
+        self.compression_ratio = compression_ratio
+        self.compress_final_output = compress_final_output
+        self.add_no_think = add_no_think
+        super().__init__(*args, **kwargs)
+
+    def forward(self, query):
+        if self.no_duplicate and query in self.input_history:
+            res = f"Error: The query <query>{query[:64]}{'...' if len(query) > 64 else ''}</query> is duplicate." \
+                " There's no new information that you have not already seen. Do not repeat this query."
+        else:
+            self.input_history.add(query)
+            res = self._forward(query)
+            if self.compress_final_output:
+                res = self.compress_tool.forward(res)
+        
+        if self.add_no_think:
+            res = f"{res} {NO_THINK}"
+        
+        return res
+
+    def _forward(self, query):
+        raise NotImplementedError("This method must be implemented!")
+
+    def reset_history(self):
+        self.input_history.clear()
+
+
+class TextCompressionTool(Tool):
+    name = "text_compression"
+    description = "Compresses texts like web search results and returns a string for the compressed text."
+    inputs = {"text": {"type": "string", "description": "The text to compress."}}
+    output_type = "string"
+
+    def __init__(
+        self,
+        model_name="microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
+        device=None,
+        compression_ratio=0.7,
+    ):
+        assert (type(compression_ratio) is float and 0.0 < compression_ratio <= 1.0), "Invalid compression ratio"
+
+        super().__init__()
+        if compression_ratio < 1.0:
+            if device is None:
+                if torch.cuda.is_available():
+                    device = "cuda"
+                elif torch.backends.mps.is_available():
+                    device = "mps"
+                else:
+                    device = "cpu"
+            self.compressor = PromptCompressor(
+                model_name=model_name,
+                device_map=device,
+                use_llmlingua2=True
+            )
+        self.compression_ratio = compression_ratio
+
+    def forward(self, text):
+        if self.compression_ratio == 1.0:
+            return text
+        res = self.compressor.compress_prompt(
+            text,
+            rate=self.compression_ratio,
+            force_tokens=['#', '\n', ',', '.', '-', '?'],
+            force_reserve_digit=True,
+            drop_consecutive=True,
+        )
+        return res["compressed_prompt"]
+
+
+class CustomWebSearchTool(CustomTool, WebSearchTool):
+    """Compress each search result individually"""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, compress_final_output=False, **kwargs)
+
+    def _forward(self, query):
+        results = self.search(query)
+        if len(results) == 0:
+            return "No results found! Try a less restrictive/shorter query."
+
+        res = "## Search Results\n\n" + "\n\n".join([
+            f"[{r['title']}]({r['link']})\n{self.compress_tool.forward(r['description'])}"
+            for r in results
+        ])
+        return res
+
+
+class CustomApiWebSearchTool(CustomTool, ApiWebSearchTool):
+    """Compress each search result individually"""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, compress_final_output=False, **kwargs)
+
+    def _forward(self, query):
+        return ApiWebSearchTool.forward(self, query)
+
+    def extract_results(self, data: dict) -> list:
+        results = []
+        for result in data.get("web", {}).get("results", []):
+            desc = result.get("description", "")
+            if len(desc) > 0:
+                desc = BeautifulSoup(desc, "html.parser").get_text()
+                desc = self.compress_tool.forward(desc)
+            results.append(
+                {"title": result["title"], "url": result["url"], "description": desc}
+            )
+        return results
+
+
+class CustomWikipediaSearchTool(CustomTool, WikipediaSearchTool):
+    def __init__(self, *args, max_output_length=10000, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.max_output_length = max_output_length
+
+    def _forward(self, query):
+        res = WikipediaSearchTool.forward(self, query)
+        if self.max_output_length is not None and len(res) > self.max_output_length:
+            return res[:max_output_length]
+        else:
+            return res
+
+class CustomVisitWebpageTool(CustomTool, VisitWebpageTool):
+    """
+        Features:
+        - Better user-agent
+        - Ability to convert pdf to markdown
+        - Automatically switches to Wikipedia tool if url is for Wikipedia
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ua = UserAgent(platforms="desktop").random
+        self.wiki = CustomWikipediaSearchTool(
+            user_agent="MyWebAgent (dpham@brave.com)",
+            language="en",
+            content_type="text",
+            extract_format="WIKI",
+            compression_ratio=self.compression_ratio,
+            add_no_think=self.add_no_think,
+            max_output_length=self.max_output_length,
+        )
+
+    def forward(self, url): # Needs to match the argument name with the VisitWebPageTool
+        return super().forward(url)
+
+    def _forward(self, url):
+        wiki_pattern = "wikipedia.org/wiki/"
+        if wiki_pattern in url:
+            url_parts = url.split(wiki_pattern)
+            if len(url_parts) != 2 or len(url_parts[1]) == 0:
+                return "Error: Invalid wikipedia URL"
+            return self.wiki.forward(unquote(url_parts[1]))
+        try:
+            headers = {
+                "User-Agent": self.ua,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Referer": "https://www.google.com/",
+            }
+            response = requests.get(url, headers=headers, timeout=5)
+            response.raise_for_status()  # Raise an exception for bad status codes
+
+            content_type = response.headers.get("Content-Type", "").lower()
+
+            if "application/pdf" in content_type or url.lower().endswith(".pdf"):
+                doc = pymupdf.open(stream=response.content, filetype="pdf")
+                markdown_content = pymupdf4llm.to_markdown(doc).strip()
+            elif "text/html" in content_type or "xml" in content_type:
+                markdown_content = markdownify(response.text).strip()
+            else:
+                return f"This content type is not supported: {content_type}"
+
+            # Clean up extra newlines
+            markdown_content = re.sub(r"\n{3,}", "\n\n", markdown_content)
+            return self._truncate_content(markdown_content, self.max_output_length)
+        
+        except requests.exceptions.Timeout:
+            return "The request timed out. Please try again later or check the URL."
+        except RequestException as e:
+            return f"Error fetching the webpage: {str(e)}"
+        except Exception as e:
+            return f"An unexpected error occurred: {str(e)}"
 
 
 def get_json_exporter(service_name, output_file):
