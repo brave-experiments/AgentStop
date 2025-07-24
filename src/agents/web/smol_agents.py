@@ -1,7 +1,9 @@
 import argparse
+import importlib.resources
 import json
 import os
 import time
+import yaml
 
 from dataclasses import asdict, is_dataclass
 from dotenv import load_dotenv
@@ -404,6 +406,31 @@ class BasicSmolAgent(WebAgent):
             not self.thinking
         )
 
+    def get_prompt_template(self, agent_type=None):
+        if not self.should_add_no_think:
+            return None # Default templates
+        if agent_type == "code":
+            file_path = "code_agent.yaml"
+        elif agent_type == "tool":
+            file_path = "toolcalling_agent.yaml"
+        else:
+            raise Exception("Invalid agent type for retrieving default templates.")
+        
+        template = yaml.safe_load(importlib.resources.files("smolagents.prompts").joinpath(file_path).read_text())
+        fields = {
+            "system_prompt": None,
+            "planning": ["initial_plan", "update_plan_post_messages"],
+            "managed_agent": ["task"],
+        }
+        for field, subfields in fields.items():
+            if subfields is None:
+                template[field] = template[field] + " " + NO_THINK
+            else:
+                for subfield in subfields:
+                    template[field][subfield] = template[field][subfield] + " " + NO_THINK
+        
+        return template
+
     def get_instrumentor(self):
         if self.instrumentor is None:
             self.instrumentor = CustomSmolagentsInstrumentor(
@@ -426,8 +453,8 @@ class WebCodeAgent(BasicSmolAgent):
         self.agent = CodeAgent(
             tools=self.tools,
             model=self.model,
+            prompt_templates=self.get_prompt_template("code"),
             planning_interval=self.planning_interval,
-            instructions=NO_THINK if self.should_add_no_think else None,
         )
 
     def init_tools(self):
@@ -459,8 +486,8 @@ class WebToolCallingAgent(WebCodeAgent):
         self.agent = ToolCallingAgent(
             tools=self.tools,
             model=self.model,
+            prompt_templates=self.get_prompt_template("tool"),
             planning_interval=self.planning_interval,
-            instructions=NO_THINK if self.should_add_no_think else None,
         )
 
 
@@ -469,16 +496,16 @@ class WebManagedAgent(WebCodeAgent):
         search_agent = ToolCallingAgent(
             tools=self.tools,
             model=self.model,
+            prompt_templates=self.get_prompt_template("tool"),
             name="search_agent",
             description="This is an agent that can do web search and retrieve web pages.",
-            instructions=NO_THINK if self.should_add_no_think else None,
         )
         self.agent = CodeAgent(
             tools=[],
             model=self.model,
+            prompt_templates=self.get_prompt_template("code"),
             managed_agents=[search_agent],
             planning_interval=self.planning_interval,
-            instructions=NO_THINK if self.should_add_no_think else None,
         )
 
 
