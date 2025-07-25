@@ -21,16 +21,23 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--model_id", type=str, nargs="+", required=True, help="Ollama model ID")
+    parser.add_argument("--dataset", type=str, choices=["simpleqa", "frames"], required=True, help="Dataset to evaluate on.")
     parser.add_argument("--output_path", type=str, required=True, help="Path for the output")
     args = parser.parse_args()
     model_ids = args.model_id
 
-    df = pd.read_csv("hf://datasets/basicv8vc/SimpleQA/simple_qa_test_set.csv")
+    if args.dataset == "simpleqa":
+        df = pd.read_csv("hf://datasets/basicv8vc/SimpleQA/simple_qa_test_set.csv")
+        question_col = "problem"
+    elif args.dataset == "frames":
+        df = pd.read_csv("hf://datasets/google/frames-benchmark/test.tsv", sep="\t")
+        question_col = "Prompt"
 
+    questions = df[question_col].to_list()
     for model_id in model_ids:
         print(f"************ Evaluating {model_id} *************")
         answer = []
-        for prob in tqdm(df["problem"].to_list()):
+        for prob in tqdm(questions):
             prompt = template.format(prob)
             res = ollama.generate(
                 model=model_id,
