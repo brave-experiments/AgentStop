@@ -39,7 +39,8 @@ class AppleIGPU:
             ioreg = plistlib.loads(subprocess.check_output(["ioreg", "-r", "-n", "AGXAcceleratorG13X", "-a"]))
             perf = None
             for reg in ioreg:
-                device_stats["name"] = reg.get("model") + " iGPU"
+                name = reg.get('model').replace('Apple', '').strip()
+                device_stats["name"] = f"{name} ({reg.get('gpu-core-count')} cores)"
                 perf = reg.get("PerformanceStatistics", None)
                 if perf is not None:
                     in_use_sys_mem = perf.get("In use system memory", None)
