@@ -89,32 +89,26 @@ class Profiler:
         self.monitoring_thread.start()
 
     def terminate_ollama(self):
-        # Stops all ollama processes
-        print("Attempting to terminate any running Ollama processes...")
-        for proc in psutil.process_iter(["pid", "name"]):
-            try:
-                if "ollama" in proc.info["name"].lower():
-                    print(f"Terminating Ollama process {proc.info['pid']}")
-                    self.stop_process(proc)
-            except Exception as e:
-                print(f"Exception occurred when terminating {proc.pid}: {e}")
-                continue
+        assert isinstance(self.ollama_model_id, str)
+        print(f"Stopping model {self.ollama_model_id}...")
+        subprocess.run(["ollama", "stop", self.ollama_model_id.split("/")[1]])
 
     def start_ollama(self):
         print("Starting Ollama...")
+        env = os.environ.copy()
+        env["OLLAMA_CONTEXT_LENGTH"] = "40960"
+        env["OLLAMA_FLASH_ATTENTION"] = "1"
+        env["OLLAMA_KV_CACHE_TYPE"] = "f16"
         subprocess.Popen(
             ["ollama", "serve"],
+            env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
         time.sleep(3)
         model_id = self.ollama_model_id.split("/")[-1]
         print(f"Preloading model {model_id}...")
-        ollama.generate(
-            model=model_id,
-            prompt=" ",
-            options={"temperature": 0.0, "num_predict": 1},
-        )
+        ollama.generate(model=model_id)
         print("Ollama started and preloaded.")
 
     def start_glances(self):
@@ -341,8 +335,6 @@ class Profiler:
         """Main method to run the complete monitoring process"""
         try:
             # Start
-            if self.ollama_model_id is not None:
-                self.terminate_ollama()
             self.start_glances()
             if self.power_output_path is not None:
                 self.start_power_measurement()
@@ -398,7 +390,7 @@ sudo python -m profiler.profile \\
     parser.add_argument("--interval", type=int, default=1000, help="Samples resource metrics every <interval> milliseconds")
     parser.add_argument("--capture_stdout", action=argparse.BooleanOptionalAction, help="Print the output of the agent to stdout.")
     parser.add_argument("--llm_backend", type=str, default=None, choices=LLM_BACKENDS, help="LLM backend to include in profiling results.")
-    parser.add_argument("--ollama_model_id", type=str, default=None, help="If specified, preload Ollama with the model.")
+    parser.add_argument("--ollama_model_id", type=str, default=None, help="If specified, start Ollama server and preload the model. The model will also be stopped at the end.")
     
     args = parser.parse_args()
 
