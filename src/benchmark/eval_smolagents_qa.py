@@ -2,6 +2,7 @@ import argparse
 import itertools
 import pandas as pd
 import subprocess
+import time
 import traceback
 
 from agents.web.smol_agents import (
@@ -52,24 +53,29 @@ if __name__ == "__main__":
             thinking=False,
         )
         
-        answer = []
+        answer = [None] * len(problems)
         for i, prob in enumerate(problems):
             print(f"\n*** Solving problem {i+1}/{len(problems)}  ***\n")
-            try:
-                agent.reset_tools()
-                res = agent.run(prob, max_steps=10)
-                if isinstance(res, AgentText):
-                    res = res.to_string()
-                    if "<think>" in res and "</think>" in res:
-                        res = res[res.rfind("</think>")+len("</think>"):]
-                    answer.append(res.strip())
-                else:
-                    answer.append(str(res))
-            except Exception as e:
-                print(traceback.format_exc())
-                answer.append(f"Exception: {e}")
+            max_try = 3
+            for try_num in range(max_try):
+                try:
+                    print(f"\nAttempt {try_num+1}:\n")
+                    agent.reset_tools()
+                    res = agent.run(prob, max_steps=10)
+                    if isinstance(res, AgentText):
+                        res = res.to_string()
+                        if "<think>" in res and "</think>" in res:
+                            res = res[res.rfind("</think>")+len("</think>"):]
+                        answer[i] = res.strip()
+                    else:
+                        answer[i] = str(res)
+                    break
+                except Exception as e:
+                    print(traceback.format_exc())
+                    answer[i] = f"Exception: {e}"
+                    time.sleep(30)
 
-            print(f"\nTarget: {targets[i]} | Answer to problem {i+1}: {answer[-1]}\n")
+            print(f"\nTarget: {targets[i]} | Answer to problem {i+1}: {answer[i]}\n")
         
-        df[col_pattern.format(model_id)] = answer
-        df.to_csv(args.output_path, index=False)
+            df[col_pattern.format(model_id)] = answer
+            df.to_csv(args.output_path, index=False)

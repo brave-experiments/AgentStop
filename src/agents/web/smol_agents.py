@@ -382,7 +382,7 @@ class BasicSmolAgent(WebAgent):
                 api_base=api_base,
                 max_tokens=max_tokens,
                 temperature=0.0,
-                timeout=180,
+                timeout=300, # Should be big enough to accomodate large models
                 seed=47,
                 flatten_messages_as_text=flatten,
             )
