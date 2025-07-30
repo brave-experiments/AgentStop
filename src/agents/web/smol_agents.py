@@ -27,6 +27,7 @@ from smolagents import (
     MultiStepAgent,
     ToolCallingAgent,
 )
+from smolagents.agents import RunResult
 from smolagents.memory import PlanningStep
 from smolagents.models import (
     ChatMessage,
@@ -341,7 +342,8 @@ class BasicSmolAgent(WebAgent):
             model_type,
             api_key=api_key,
             api_base=api_base,
-            thinking=thinking
+            thinking=thinking,
+            **kwargs,
         )
         self.should_add_no_think = (
             self.model_type == "litellm" and
@@ -360,10 +362,15 @@ class BasicSmolAgent(WebAgent):
         api_base=None,
         max_tokens=40960, # Ollama Qwen 3's context length limit
         thinking=False,
+        temperature=0.0,
+        top_p=1.0,
+        top_k=20,
+        min_p=0.0,
+        **kwargs,
     ):
-        if model_type == "mlx":
-            # MLX is customized for Apple silicon
-            # Default is greedy sampling
+        if model_type == "mlx": # MLX is customized for Apple silicon
+            from mlx_lm.sample_utils import make_sampler
+            sampler = make_sampler(temp=temperature, top_p=top_p, min_p=min_p, top_k=top_k)
             self.model = MLXModel(
                 model_id=model_id,
                 trust_remote_code=True,
@@ -371,6 +378,7 @@ class BasicSmolAgent(WebAgent):
                 apply_chat_template_kwargs={
                     "enable_thinking": thinking,
                 },
+                sampler=sampler,
             )
         elif model_type == "litellm":
             flatten = None
@@ -381,7 +389,11 @@ class BasicSmolAgent(WebAgent):
                 api_key=api_key,
                 api_base=api_base,
                 max_tokens=max_tokens,
-                temperature=0.0,
+                num_ctx=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
+                min_p=min_p,
                 timeout=300, # Should be big enough to accomodate large models
                 seed=47,
                 flatten_messages_as_text=flatten,
@@ -440,6 +452,15 @@ class BasicSmolAgent(WebAgent):
             )
         return self.instrumentor
 
+    def get_current_results(self):
+        return RunResult(
+            output=None,
+            token_usage=None,
+            messages=self.agent.memory.get_full_steps(),
+            timing=None,
+            state=None
+        )
+
     def run(self, prompt, *args, **kwargs):
         return self.agent.run(prompt, *args, **kwargs)
 
@@ -455,6 +476,7 @@ class WebCodeAgent(BasicSmolAgent):
             model=self.model,
             prompt_templates=self.get_prompt_template("code"),
             planning_interval=self.planning_interval,
+            return_full_result=True,
         )
 
     def init_tools(self):
@@ -488,6 +510,7 @@ class WebToolCallingAgent(WebCodeAgent):
             model=self.model,
             prompt_templates=self.get_prompt_template("tool"),
             planning_interval=self.planning_interval,
+            return_full_result=True,
         )
 
 
@@ -506,6 +529,7 @@ class WebManagedAgent(WebCodeAgent):
             prompt_templates=self.get_prompt_template("code"),
             managed_agents=[search_agent],
             planning_interval=self.planning_interval,
+            return_full_result=True,
         )
 
 
@@ -574,12 +598,8 @@ python -m agents.web.smol_agents \\
         choices=list(AGENT_MAP.keys()),
         help=f"Type of agent.",
     )
-    parser.add_argument(
-        "--planning_interval", type=int, default=None, help="Planning interval."
-    )
-    parser.add_argument(
-        "--max_steps", type=int, default=10, help="Maximum number of steps for the agent."
-    )
+    parser.add_argument("--planning_interval", type=int, default=None, help="Planning interval.")
+    parser.add_argument("--max_steps", type=int, default=10, help="Maximum number of steps for the agent.")
     parser.add_argument("--api_base", type=str, default=None, help="API base for LiteLLM.")
     parser.add_argument(
         "--compression_ratio",
@@ -587,6 +607,10 @@ python -m agents.web.smol_agents \\
         default=1.0,
         help="Compression ratio for all results from the web."
     )
+    parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
+    parser.add_argument("--top_p", type=float, default=1.0, help="Sampling top_p")
+    parser.add_argument("--top_k", type=int, default=20, help="Sampling top_k")
+    parser.add_argument("--min_p", type=float, default=0.0, help="Sampling min_p")
     args = parser.parse_args()
 
     agent = AGENT_MAP[args.agent_type](
@@ -598,7 +622,12 @@ python -m agents.web.smol_agents \\
         api_base=args.api_base,
         compression_ratio=args.compression_ratio,
         planning_interval=args.planning_interval,
+        temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k,
+        min_p=args.min_p,
     )
     if args.trace_path is not None:
         agent.enable_tracing(args.trace_path)
-    print(agent.run(args.prompt, max_steps=args.max_steps))
+    results = agent.run(args.prompt, max_steps=args.max_steps)
+    print(results.output)
