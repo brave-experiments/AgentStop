@@ -78,13 +78,13 @@ class WebAgent:
         model_id,
         model_type,
         *args,
-        stream=False,
+        stream_llm=False,
         **kwargs
     ):
         self.name = name
         self.model_id = model_id
         self.model_type = model_type
-        self.stream = stream
+        self.stream_llm = stream_llm
         self.instrumentor = None
         self.args = args
         self.kwargs = kwargs
@@ -330,6 +330,27 @@ class CustomVisitWebpageTool(CustomTool, VisitWebpageTool):
         except Exception as e:
             return f"An unexpected error occurred: {str(e)}"
 
+def create_tools(add_no_think, compression_ratio):
+    return [
+        CustomApiWebSearchTool(
+            compression_ratio=compression_ratio,
+            add_no_think=add_no_think,
+        ),
+        CustomWikipediaSearchTool(
+            user_agent="MyWebAgent (dpham@brave.com)",
+            language="en",
+            content_type="text",
+            extract_format="WIKI",
+            compression_ratio=compression_ratio,
+            add_no_think=add_no_think,
+            max_output_length=10000,
+        ),
+        CustomVisitWebpageTool(
+            compression_ratio=compression_ratio,
+            add_no_think=add_no_think,
+            max_output_length=10000,
+        ),
+    ]
 
 def get_json_exporter(service_name, output_file):
     resource = Resource.create({"service.name": service_name})
@@ -346,12 +367,15 @@ def get_custom_arg_parser(description, example_text):
         epilog=example_text,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--model_id", type=str, required=True, help="Model ID to use.")
+    parser.add_argument("--model_id", type=str, nargs="+", required=True, help="Model ID(s) to use.")
     parser.add_argument("--model_type", type=str, required=True, help="Type of the model backend.")
     parser.add_argument("--prompt", type=str, required=True, help="Prompt to give to the agent.")
-    parser.add_argument("--stream", action=argparse.BooleanOptionalAction, default=False, help="Enable streaming.")
+    parser.add_argument("--stream", action=argparse.BooleanOptionalAction, default=False, help="Enable LLM streaming.")
     parser.add_argument("--thinking", action=argparse.BooleanOptionalAction, default=False, help="Enable thinking.")
     parser.add_argument("--trace_path", type=str, default=None, help="Path to save the JSON trace.")
     parser.add_argument("--api_key_env", type=str, default=None, help="Optional .env's field for the model API key.")
-
+    parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
+    parser.add_argument("--top_p", type=float, default=1.0, help="Sampling top_p")
+    parser.add_argument("--top_k", type=int, default=20, help="Sampling top_k")
+    parser.add_argument("--min_p", type=float, default=0.0, help="Sampling min_p")
     return parser

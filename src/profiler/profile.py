@@ -107,6 +107,14 @@ class Profiler:
         )
         time.sleep(3)
         model_id = self.ollama_model_id.split("/")[-1]
+
+        # Unload the model if currently running to reset K-V cache
+        running_models = ollama.ps()
+        for model in running_models.models:
+            if model_id == model.model:
+                self.terminate_ollama()
+                break
+
         print(f"Preloading model {model_id}...")
         ollama.generate(model=model_id)
         print("Ollama started and preloaded.")
