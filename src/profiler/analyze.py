@@ -311,7 +311,6 @@ Write your short description here:
             extra_data = {}
 
             if kind == LLM:
-                is_parent_of_LLM = False
                 # Copy attributes from parent LLM span
                 parent_id = t["parent_span_id"]
                 if parent_id is not None:
@@ -322,6 +321,7 @@ Write your short description here:
                                 attributes[k] = v
 
                 # Check if parent of LLM to save some work
+                is_parent_of_LLM = False
                 for child_id in id_to_child_id[t["span_id"]]:
                     child_attr = id_to_trace[child_id]["attributes"]
                     if child_attr[TRACE_KIND_FIELD] == LLM:
@@ -396,7 +396,7 @@ Write your short description here:
                             pass
             
             span = {
-                "name": t["name"],
+                "name": attributes.get("llm.model_name", t["name"]),
                 "level": id_to_level[t["span_id"]],
                 "start_time": (t["start_time"] - start_time) / SEC_TO_NANOSEC,
                 "end_time": (t["end_time"] - start_time) / SEC_TO_NANOSEC,
