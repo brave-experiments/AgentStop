@@ -202,7 +202,7 @@ class Profiler:
         try:
             # Run the target script
             self.target_process = subprocess.Popen(
-                shlex.split(self.target_script),
+                [s.strip() for s in shlex.split(self.target_script)],
                 stdout=output,
                 stderr=output,
             )

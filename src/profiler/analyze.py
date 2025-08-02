@@ -22,6 +22,7 @@ KB_TO_BYTE = 1024
 
 TRACE_KIND_FIELD = "openinference.span.kind"
 LLM = "LLM"
+LLM_MODEL_NAME = "llm.model_name"
 DEVICE_TYPE_APPLE_LAPTOP = "apple_laptop"
 DEVICE_TYPE_JETSON = "jetson"
 FIRST_TOKEN_TS = "first_token_ts"
@@ -76,6 +77,7 @@ class Analyzer:
         output_dir="./analysis_logs",
         output_ext=["png"],
         display_plots=False,
+        display_summary=False,
     ):
         assert device_type in [DEVICE_TYPE_APPLE_LAPTOP, DEVICE_TYPE_JETSON]
         self.device_type = device_type
@@ -98,6 +100,7 @@ class Analyzer:
         self.output_ext = output_ext
         self.full_execution = full_execution
         self.display_plots = display_plots
+        self.display_summary = display_summary
 
     def process_glances_log(self):
         data = [{
@@ -297,8 +300,9 @@ Write your short description here:
 
         id_to_trace = {t["span_id"]: t for t in self.agent_trace}
         
-        prefix = []
+        prefix = None
         base_prefill_tps = None
+        cur_model = None
         start_time = self.glances_df["timestamp"].iloc[0]
         processed = []
         for t in tqdm(self.agent_trace):
@@ -331,6 +335,7 @@ Write your short description here:
                 # Create description text for span
                 agent_desc = ""
                 token_desc = ""
+                model_name = attributes.get(LLM_MODEL_NAME, None)
                 input_msg = attributes.get("input.value", None)
                 output_msg = attributes.get("output.value", None)
                 input_tokens = attributes.get(PREFILL_COUNT, None)
@@ -343,9 +348,11 @@ Write your short description here:
                     pf_time = input_tokens * 1.0 / pf_tps
                     cached_tokens = 0
 
-                    if len(prefix) == 0:
-                        prefix.append({"text": input_msg, "tokens": input_tokens})
+                    if base_prefill_tps is None or (cur_model is not None and cur_model != model_name):
+                        prefix = [{"text": input_msg, "tokens": input_tokens}]
                         base_prefill_tps = pf_tps
+                        cur_model = model_name
+
                     elif pf_tps > base_prefill_tps * 1.1: # Likely cached
                         for p in prefix:
                             if input_msg.startswith(p["text"][:-1]): # Ignore the closing ]
@@ -396,7 +403,7 @@ Write your short description here:
                             pass
             
             span = {
-                "name": attributes.get("llm.model_name", t["name"]),
+                "name": attributes.get(LLM_MODEL_NAME, t["name"]),
                 "level": id_to_level[t["span_id"]],
                 "start_time": (t["start_time"] - start_time) / SEC_TO_NANOSEC,
                 "end_time": (t["end_time"] - start_time) / SEC_TO_NANOSEC,
@@ -558,6 +565,7 @@ Write your short description here:
         bar_height = 0.2
         level_positions = [i * spacing for i in range(max_level)]
         fontsize = 8
+        tool_height_idx = 0
 
         # Config axis
         ax.set_ylim(-spacing, level_positions[-1] + spacing)
@@ -628,7 +636,10 @@ Write your short description here:
                         text = self.wrap_text_to_axis_width(ax, desc, t_start, t_start + duration, fontsize=6)
                         ax.text(bar_center, y_pos - bar_height, text, ha="center", va="top", fontsize=6)
                     elif kind == "TOOL":
-                        ax.text(bar_center, y_pos + bar_height, desc[:50], ha="center", va="top", fontsize=fontsize)
+                        text = desc[:25] + ("..." if len(desc) > 25 else "")
+                        y_pos_adjusted = y_pos + bar_height + 0.5 * bar_height * (tool_height_idx % 2) # Alternate
+                        tool_height_idx += 1
+                        ax.text(bar_center, y_pos_adjusted, text, ha="center", va="top", fontsize=fontsize)
 
         # Legend
         legend_handles = [mpatches.Patch(color=color, label=stage) for stage, color in stage_to_color.items()]
@@ -735,6 +746,7 @@ Write your short description here:
         
         if self.display_plots:
             plt.show()
+        plt.close()
 
     def plot_gpu_metrics(self):
         if self.device_type == DEVICE_TYPE_JETSON:
@@ -979,11 +991,12 @@ Write your short description here:
             if type(v) is np.int64:
                 stats[k] = int(v)
         
-        print("*** Summary ***")
         stats_txt = json.dumps(stats, indent=4)
-        print(stats_txt)
         with open(f"{self.output_dir}/summary.txt", "w") as f:
             f.write(stats_txt)
+        if self.display_summary:
+            print("*** Summary ***")
+            print(stats_txt)
 
     def summarize_stats_per_step(self):
         agent_trace = self.get_topmost_spans()
@@ -1088,11 +1101,12 @@ Write your short description here:
                 if type(v) is np.int64:
                     stat[k] = int(v)
 
-        print("*** Step-by-step summary ***")
         stats_txt = json.dumps(stats, indent=4)
-        print(stats_txt)
         with open(f"{self.output_dir}/step_summary.txt", "w") as f:
             f.write(stats_txt)
+        if self.display_summary:
+            print("*** Step-by-step summary ***")
+            print(stats_txt)
 
     def analyze(self):
         print("Processing glances...")
@@ -1156,6 +1170,7 @@ python -m profiler.analyze \\
     parser.add_argument("--output_dir", type=str, required=True, help="Path to the directory to write analyses, figures, etc.")
     parser.add_argument("--output_ext", type=str, nargs="+", choices=["png", "pdf", "svg"], default=["png"], help="File type for saving (e.g., png, pdf, svg).")
     parser.add_argument("--display_plots", action=argparse.BooleanOptionalAction, help="Whether to display the plots.")
+    parser.add_argument("--display_summary", action=argparse.BooleanOptionalAction, help="Whether to print the summaries.")
 
     args = parser.parse_args()
 
@@ -1169,5 +1184,6 @@ python -m profiler.analyze \\
         output_dir=args.output_dir,
         output_ext=args.output_ext,
         display_plots=args.display_plots,
+        display_summary=args.display_summary,
     )
     analyzer.analyze()
