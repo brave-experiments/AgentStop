@@ -1,9 +1,14 @@
 import importlib.resources
+import json
 import os
+import time
 import yaml
 
 from dotenv import load_dotenv
 from profiler.instrumentor import CustomSmolagentsInstrumentor
+from rich.rule import Rule
+from rich.text import Text
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 from smolagents import (
     CodeAgent,
     LiteLLMModel,
@@ -12,6 +17,7 @@ from smolagents import (
 )
 from smolagents.agents import RunResult
 from smolagents.memory import ActionStep, PlanningStep
+from smolagents.monitoring import LogLevel, Timing
 from .utils import (
     create_tools,
     get_custom_arg_parser,
@@ -213,12 +219,14 @@ class BasicCascadeAgent(WebCodeAgent):
         self,
         model_ids,
         model_type,
+        should_compress_context=False,
         **kwargs,
     ):
         assert len(model_ids) >= 2
         super().__init__(stream_run=True, **kwargs)
         self.model_ids = model_ids
         self.model_idx = 0
+        self.should_compress_context = should_compress_context
 
     def cascade(self):
         if self.model_idx == len(self.model_ids) - 1:
@@ -241,11 +249,17 @@ class BasicCascadeAgent(WebCodeAgent):
     def run(self, prompt, **kwargs):
         for step in self.agent.run(prompt, stream=True, **kwargs):
             if self.should_cascade(step):
+                if self.should_compress_context:
+                    self.compress_context(original_task=prompt, **kwargs)
                 self.cascade()
         return step
 
     def should_cascade(self, step):
         raise NotImplementedError("You need to implement the cascading criteria.")
+
+    def compress_context(self, original_task=None):
+        raise NotImplementedError("You need to implement the context compression method.")
+
 
 class FixedCascadeAgent(BasicCascadeAgent):
     '''
@@ -261,20 +275,78 @@ class FixedCascadeAgent(BasicCascadeAgent):
     def should_cascade(self, step):
         return (
             isinstance(step, ActionStep) and
+            not step.is_final_answer and
             step.step_number == self.cascade_step
         )
+
+
+class FixedCascadeAgentWithCompression(FixedCascadeAgent):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, should_compress_context=True, **kwargs)
+
+    def compress_context(self, original_task, **kwargs):
+        start_time = time.time()
+        summary = []
+        idx = 0
+        all_tool_calls = set()
+        for step in self.agent.memory.steps:
+            if not (isinstance(step, ActionStep) and step.error is None and step.tool_calls is not None):
+                continue
+            step_dict = step.dict()
+            tool_calls = []
+            for tool_call in step_dict["tool_calls"]:
+                tool_name = tool_call["function"]["name"]
+                tool_args = tool_call["function"]["arguments"]
+                tool_call_str = f"{tool_name}_{tool_args}"
+                if tool_call_str not in all_tool_calls:
+                    all_tool_calls.add(tool_call_str)
+                    tool_calls.append({"name": tool_name, "arguments": tool_args})
+
+            if len(tool_calls) > 0:
+                tool_output = " ".join(w for w in step_dict["observations"].split(" ") if w not in ENGLISH_STOP_WORDS)
+                summary.append({
+                    "step_number": idx,
+                    "tool_calls": tool_calls,
+                    "tool_response": tool_output,
+                })
+                idx += 1
+        
+        plan = f"""Below is a brief JSON-formatted report of a previous partial attempt at solving the task.
+I need to consider the report to determine what I should or should not do in my own attempt at the task.
+If there is sufficient information from the report to solve the task, then I should attempt to solve it.
+I need to avoid repeating what has already been tried in the report.
+
+<summary>
+{json.dumps(summary, indent=2)}
+</summary>
+"""
+        self.agent.logger.log(Rule(f"[bold]Context compressions", style="orange"), Text(plan), level=LogLevel.INFO)
+        planning_step = PlanningStep(
+            model_input_messages=[],
+            plan=plan,
+            model_output_message=None,
+            token_usage=None,
+            timing=Timing(start_time=start_time, end_time=time.time()),
+        )
+
+        # Edit agent's memory to remove all previous steps except the task step
+        self.agent.memory.steps = self.agent.memory.steps[:1]
+        self.agent.memory.steps.append(planning_step)
+
 
 class AgentType:
     CODE = "code"
     TOOL = "tool"
     MANAGED = "managed"
     FIXED_CASCADE = "fixed_cascade"
+    FIXED_CASCADE_COMPRESS = "fixed_cascade_compress"
 
 AGENT_MAP = {
     AgentType.CODE: WebCodeAgent,
     AgentType.TOOL: WebToolCallingAgent,
     AgentType.MANAGED: WebManagedAgent,
     AgentType.FIXED_CASCADE: FixedCascadeAgent,
+    AgentType.FIXED_CASCADE_COMPRESS: FixedCascadeAgentWithCompression,
 }
 
 
