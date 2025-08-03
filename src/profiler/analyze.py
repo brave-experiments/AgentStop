@@ -1,5 +1,5 @@
 """
-Analyze glances log and agent's trace
+Analyze glances log and agent's trace.
 """
 
 import argparse
@@ -10,8 +10,14 @@ import matplotlib.patches as mpatches
 import numpy as np
 import ollama
 import pandas as pd
+import re
 import seaborn as sns
 import sys
+
+from openinference.semconv.trace import (
+    OpenInferenceSpanKindValues,
+    SpanAttributes
+)
 from tqdm import tqdm
 from collections import deque
 from pathlib import Path
@@ -20,14 +26,17 @@ SEC_TO_NANOSEC = 1_000_000_000
 GB_TO_BYTE = 1024 * 1024 * 1024
 KB_TO_BYTE = 1024
 
-TRACE_KIND_FIELD = "openinference.span.kind"
-LLM = "LLM"
-LLM_MODEL_NAME = "llm.model_name"
-DEVICE_TYPE_APPLE_LAPTOP = "apple_laptop"
-DEVICE_TYPE_JETSON = "jetson"
+SPAN_KIND = SpanAttributes.OPENINFERENCE_SPAN_KIND
+AGENT = OpenInferenceSpanKindValues.AGENT.value
+CHAIN = OpenInferenceSpanKindValues.CHAIN.value
+LLM = OpenInferenceSpanKindValues.LLM.value
+TOOL = OpenInferenceSpanKindValues.TOOL.value
+LLM_MODEL_NAME = SpanAttributes.LLM_MODEL_NAME
+INPUT_VALUE = SpanAttributes.INPUT_VALUE
+OUTPUT_VALUE = SpanAttributes.OUTPUT_VALUE
 FIRST_TOKEN_TS = "first_token_ts"
-PREFILL_COUNT = "llm.token_count.prompt"
-GENERATION_COUNT = "llm.token_count.completion"
+PREFILL_COUNT = SpanAttributes.LLM_TOKEN_COUNT_PROMPT
+GENERATION_COUNT = SpanAttributes.LLM_TOKEN_COUNT_COMPLETION
 CACHED_COUNT = "cached_count"
 PREFILL_TPS = "prefill_tps"
 GENERATION_TPS = "generation_tps"
@@ -65,6 +74,11 @@ def energy(ts, power_data, ts_is_elapsed=False):
             res.append((f"energy_{label}_mWh_per_token", e / token_count))
     return res
 
+class DeviceType:
+    APPLE_LAPTOP = "apple_laptop"
+    JETSON = "jetson"
+    ALL = [APPLE_LAPTOP, JETSON]
+
 class Analyzer:
     def __init__(
         self,
@@ -79,7 +93,7 @@ class Analyzer:
         display_plots=False,
         display_summary=False,
     ):
-        assert device_type in [DEVICE_TYPE_APPLE_LAPTOP, DEVICE_TYPE_JETSON]
+        assert device_type in [DeviceType.APPLE_LAPTOP, DeviceType.JETSON]
         self.device_type = device_type
         with Path(glances_log_path).open("r", encoding="utf-8") as f:
             self.glances_log = [json.loads(l) for l in f if l.strip()]
@@ -99,6 +113,9 @@ class Analyzer:
         self.output_dir = output_dir
         self.output_ext = output_ext
         self.full_execution = full_execution
+        self.processed_agent_trace = None
+        self.agent_task = None
+        self.agent_output = None
         self.display_plots = display_plots
         self.display_summary = display_summary
 
@@ -148,9 +165,9 @@ class Analyzer:
         if self.glances_df is None:
             raise Exception("Needs processed glances to process power log")
 
-        if self.device_type == DEVICE_TYPE_APPLE_LAPTOP:
+        if self.device_type == DeviceType.APPLE_LAPTOP:
             self.process_powermetrics_log()
-        elif self.device_type == DEVICE_TYPE_JETSON:
+        elif self.device_type == DeviceType.JETSON:
             self.process_tegrastats_log()
 
     def process_powermetrics_log(self):
@@ -306,11 +323,31 @@ Write your short description here:
         start_time = self.glances_df["timestamp"].iloc[0]
         processed = []
         for t in tqdm(self.agent_trace):
+            attributes = t["attributes"]
+            kind = attributes[SPAN_KIND]
+            if kind == AGENT:
+                agent_task = attributes.get(INPUT_VALUE, None)
+                if agent_task is not None:
+                    try:
+                        agent_task = json.loads(agent_task).get("task", None)
+                    except:
+                        pass
+                
+                agent_output = attributes.get(OUTPUT_VALUE, None)
+                if agent_output is not None:
+                    match = re.search(r"output='(.*?)'", agent_output)
+                    if match:
+                        agent_output = match.group(1)
+                
+                self.agent_task = agent_task
+                self.agent_output = agent_output
+
+
             if (t["end_time"] - t["start_time"]) / SEC_TO_NANOSEC < 0.1:
                 continue
 
             attributes = t["attributes"]
-            kind = attributes[TRACE_KIND_FIELD]
+            kind = attributes[SPAN_KIND]
             desc = None
             extra_data = {}
 
@@ -319,7 +356,7 @@ Write your short description here:
                 parent_id = t["parent_span_id"]
                 if parent_id is not None:
                     parent_attr = id_to_trace[parent_id]["attributes"]
-                    if parent_attr[TRACE_KIND_FIELD] == LLM:
+                    if parent_attr[SPAN_KIND] == LLM:
                         for k, v in parent_attr.items():
                             if k not in attributes:
                                 attributes[k] = v
@@ -328,7 +365,7 @@ Write your short description here:
                 is_parent_of_LLM = False
                 for child_id in id_to_child_id[t["span_id"]]:
                     child_attr = id_to_trace[child_id]["attributes"]
-                    if child_attr[TRACE_KIND_FIELD] == LLM:
+                    if child_attr[SPAN_KIND] == LLM:
                         is_parent_of_LLM = True
                         break
 
@@ -384,7 +421,7 @@ Write your short description here:
                         GENERATION_TPS: gen_tps,
                     })
             
-            elif kind == "TOOL":
+            elif kind == TOOL:
                 if "search" in t["name"].lower():
                     input_value = attributes.get("input.value", None)
                     if input_value is not None:
@@ -576,9 +613,9 @@ Write your short description here:
         ax.set_ylabel("Execution Type")
         type_to_level = {
             other_label: 0,
-            "CHAIN": 0,
+            CHAIN: 0,
             LLM: 1,
-            "TOOL": 2,
+            TOOL: 2,
         }
 
         # Plot stages
@@ -596,7 +633,7 @@ Write your short description here:
         }
         grouped_agent_trace = [
             [t for t in agent_trace if t["kind"] == kind]
-            for kind in [LLM, "TOOL", "CHAIN"]
+            for kind in [LLM, TOOL, CHAIN]
         ]
         grouped_agent_trace.append([custom_init_trace, custom_end_trace])
         for level_group in grouped_agent_trace:
@@ -635,7 +672,7 @@ Write your short description here:
                     if kind == LLM:
                         text = self.wrap_text_to_axis_width(ax, desc, t_start, t_start + duration, fontsize=6)
                         ax.text(bar_center, y_pos - bar_height, text, ha="center", va="top", fontsize=6)
-                    elif kind == "TOOL":
+                    elif kind == TOOL:
                         text = desc[:25] + ("..." if len(desc) > 25 else "")
                         y_pos_adjusted = y_pos + bar_height + 0.5 * bar_height * (tool_height_idx % 2) # Alternate
                         tool_height_idx += 1
@@ -737,6 +774,26 @@ Write your short description here:
             self.plot_trace_execution_timeline_summarized(ax_stage, other_axes)
         ax_stage.set_xlabel("Time Elapsed (sec)")
 
+        # Draw input and output boxes
+        if isinstance(self.agent_task, str):
+            x_start, x_end = ax.get_xlim()
+            x_end = x_start + 0.25 * (x_end - x_start)
+            task_text = self.wrap_text_to_axis_width(ax, f"Task: {self.agent_task}", x_start, x_end, fontsize=8)
+            if self.agent_output is not None:
+                output_text = f"Answer: {self.agent_output[:100]}{'...' if len(self.agent_output) > 100 else ''}"
+                output_text = self.wrap_text_to_axis_width(ax, output_text, x_start, x_end, fontsize=8)
+            else:
+                output_text = ""
+            text = f"{task_text}\n\n{output_text}".strip()
+            ax.text(
+                0.01, 0.99,  # x and y in axes fraction coordinates (0 to 1)
+                text,
+                transform=ax.transAxes,
+                verticalalignment="top",
+                horizontalalignment="left",
+                fontsize=8,
+            )
+
         plt.tight_layout()
         for ext in self.output_ext:
             if ext == "png":
@@ -749,7 +806,7 @@ Write your short description here:
         plt.close()
 
     def plot_gpu_metrics(self):
-        if self.device_type == DEVICE_TYPE_JETSON:
+        if self.device_type == DeviceType.JETSON:
             return self.plot_metrics(
                 "gpu",
                 title="GPU Utilization and Frequency Over Time",
@@ -782,7 +839,7 @@ Write your short description here:
         )
 
     def plot_cpu_and_gpu_metrics(self):
-        if self.device_type == DEVICE_TYPE_JETSON:
+        if self.device_type == DeviceType.JETSON:
             return self.plot_metrics(
                 "cpu_and_gpu",
                 title="CPU and GPU Utilization and Frequency Over Time",
@@ -851,13 +908,13 @@ Write your short description here:
         )
 
     def get_temperature_metrics(self):
-        if self.device_type == DEVICE_TYPE_APPLE_LAPTOP:
+        if self.device_type == DeviceType.APPLE_LAPTOP:
             return [
                 ("smctemp_cpu", "CPU Temperature"),
                 ("gpu_temp", "GPU Temperature"),
                 ("battery_temp", "Battery Temperature"),
             ]
-        elif self.device_type == DEVICE_TYPE_JETSON:
+        elif self.device_type == DeviceType.JETSON:
             return [
                 (c, c[5:]) for c in self.power_df.columns.to_list() if (
                     c.startswith("temp_") and
@@ -871,7 +928,7 @@ Write your short description here:
             title="Temperature Over Time",
             y_axis_label="Celcius",
             metrics=self.get_temperature_metrics(),
-            power=self.device_type == DEVICE_TYPE_JETSON,
+            power=self.device_type == DeviceType.JETSON,
         )
 
     def plot_temp_and_fan_metrics(self):
@@ -880,7 +937,7 @@ Write your short description here:
             title="Temperature and Fan Speed Over Time",
             y_axis_label="Celcius",
             metrics=self.get_temperature_metrics(),
-            power=self.device_type == DEVICE_TYPE_JETSON,
+            power=self.device_type == DeviceType.JETSON,
             second_y_axis_label="RPM",
             second_metrics=[
                 ("fan_max_speed", "Fan Speed (max)", {"color": "brown", "linestyle": "--"}),
@@ -888,7 +945,7 @@ Write your short description here:
         )
 
     def plot_battery_metrics(self):
-        if self.device_type == DEVICE_TYPE_APPLE_LAPTOP:
+        if self.device_type == DeviceType.APPLE_LAPTOP:
             self.plot_metrics(
                 "battery",
                 title="Battery Capacity and Discharge Over Time",
@@ -899,12 +956,12 @@ Write your short description here:
             )
 
     def get_power_metrics(self):
-        if self.device_type == DEVICE_TYPE_APPLE_LAPTOP:
+        if self.device_type == DeviceType.APPLE_LAPTOP:
             return [
                 ("cpu_power", "CPU Power"),
                 ("gpu_power", "GPU Power"),
             ]
-        elif self.device_type == DEVICE_TYPE_JETSON:
+        elif self.device_type == DeviceType.JETSON:
             return [
                 (c, c[6:]) for c in self.power_df.columns.to_list() if c.startswith("power_")
             ]
@@ -932,11 +989,11 @@ Write your short description here:
             power=True,
             second_y_axis_label="Temperature (Celcius)",
             second_metrics=temp_metrics,
-            second_metrics_power=self.device_type==DEVICE_TYPE_JETSON,
+            second_metrics_power=self.device_type==DeviceType.JETSON,
         )
 
     def plot_power_and_battery_metrics(self):
-        if self.device_type != DEVICE_TYPE_APPLE_LAPTOP:
+        if self.device_type != DeviceType.APPLE_LAPTOP:
             return
         self.plot_metrics(
             "power_and_battery",
@@ -962,7 +1019,7 @@ Write your short description here:
             "peak_system_mem_gb": df["mem_used_plot"].max(),
         }
 
-        if self.device_type == DEVICE_TYPE_APPLE_LAPTOP:
+        if self.device_type == DeviceType.APPLE_LAPTOP:
             stats.update({
                 "peak_gpu_mem_gb": df["gpu_mem_plot"].max(),
                 "peak_gpu_temp_celcius": df["gpu_temp"].max(),
@@ -979,7 +1036,7 @@ Write your short description here:
                 ]
                 for k, v in energy(pwr_df["elapsed_ns"], power_stats, ts_is_elapsed=True):
                     stats[k] = v
-        elif self.device_type == DEVICE_TYPE_JETSON and pwr_df is not None:
+        elif self.device_type == DeviceType.JETSON and pwr_df is not None:
             power_stats = [(pwr_df[m], l, None) for m, l in self.get_power_metrics()]
             for k, v in energy(pwr_df["timestamp"], power_stats):
                 stats[k] = v
@@ -1044,7 +1101,7 @@ Write your short description here:
                     ("avg_system_mem_gb", df["mem_used_plot"].mean()),
                 ]
                 
-                if self.device_type == DEVICE_TYPE_APPLE_LAPTOP:
+                if self.device_type == DeviceType.APPLE_LAPTOP:
                     metrics.extend([
                         ("avg_gpu_usage_pct", df["gpu_usage"].mean()),
                         ("avg_gpu_mem_gb", df["gpu_mem_plot"].mean()),
@@ -1077,7 +1134,7 @@ Write your short description here:
                             *energy(power_df["elapsed_ns"], energy_stats, ts_is_elapsed=True),
                         ])
                 
-                elif self.device_type == DEVICE_TYPE_JETSON and self.power_df is not None:
+                elif self.device_type == DeviceType.JETSON and self.power_df is not None:
                     power_df = self.power_df
                     ts = power_df["timestamp_plot"]
                     power_df = power_df[(ts >= start_time) & (ts < end_time)]
@@ -1155,13 +1212,7 @@ python -m profiler.analyze \\
         epilog=example_text,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument(
-        "--device_type",
-        type=str,
-        required=True,
-        choices=[DEVICE_TYPE_APPLE_LAPTOP, DEVICE_TYPE_JETSON],
-        help="Type of device."
-    )
+    parser.add_argument("--device_type", type=str, required=True, choices=DeviceType.ALL, help="Type of device.")
     parser.add_argument("--glances_log_path", type=str, required=True, help="Path to the glances log.")
     parser.add_argument("--agent_trace_path", type=str, required=True, help="Path to the agent's trace.")
     parser.add_argument("--power_log_path", type=str, default=None, help="Path to the power measurement log.")

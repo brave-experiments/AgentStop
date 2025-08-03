@@ -22,11 +22,61 @@ import traceback
 from datetime import timezone
 from pathlib import Path
 
-LLM_BACKENDS = ["ollama", "mlc"]
-LLM_BACKEND_PROCESS_FILTER = {
-    "ollama": r"(o|O)llama",
-    "mlc": r"mlc_llm",
-}
+class LlmBackend:
+    OLLAMA = "Ollama"
+    MLC = "MLC"
+    ALL = [OLLAMA, MLC]
+    PROCESS_FILTER = {
+        OLLAMA: r"(o|O)llama",
+        MLC: r"mlc_llm",
+    }
+
+    def __init__(self, backend):
+        assert backend in self.ALL
+        self.backend = backend
+        self.filter = self.PROCESS_FILTER[backend]
+
+    def start(self, model_id):
+        if self.backend != self.OLLAMA:
+            raise NotImplementedError("Only Ollama is supported for now.")
+
+        print("Starting Ollama...")
+        env = os.environ.copy()
+        env["OLLAMA_CONTEXT_LENGTH"] = "40960"
+        env["OLLAMA_FLASH_ATTENTION"] = "1"
+        env["OLLAMA_KV_CACHE_TYPE"] = "f16"
+        subprocess.Popen(
+            ["ollama", "serve"],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(3)
+        
+        # Unload all existing models to reset K-V cache
+        self.reset()
+
+        print(f"Preloading model {model_id}...")
+        ollama.generate(model=model_id)
+        print("Ollama started and preloaded.")
+
+    def reset(self):
+        if self.backend != self.OLLAMA:
+            raise NotImplementedError("Only Ollama is supported for now.")
+
+        models = ollama.ps()
+        for model in ollama.ps().models:
+            model_id = model.model
+            print(f"Stopping model {model_id}...")
+            subprocess.run(["ollama", "stop", model_id])
+            time.sleep(1)
+
+    def is_glances_process(self, process):
+        if self.backend == self.OLLAMA:
+            target = process["name"]
+        elif self.backend == self.MLC:
+            target = " ".join(process["cmdline"])
+        return bool(re.search(self.filter, target))
 
 class Profiler:
     def __init__(
@@ -38,7 +88,7 @@ class Profiler:
         interval=1000, # ms
         capture_stdout=False,
         llm_backend=None,
-        ollama_model_id=None,
+        preload_model_id=None,
     ):
         self.target_script = target_script
         self.process_filter = process_filter
@@ -48,10 +98,8 @@ class Profiler:
         self.capture_stdout = capture_stdout
 
         if llm_backend is not None:
-            assert llm_backend in LLM_BACKENDS and llm_backend in LLM_BACKEND_PROCESS_FILTER
-        self.llm_backend = llm_backend
-        self.llm_backend_filter = LLM_BACKEND_PROCESS_FILTER.get(llm_backend, None)
-        self.ollama_model_id = ollama_model_id
+            self.llm_backend = LlmBackend(llm_backend)
+        self.preload_model_id = preload_model_id
 
         self.glances_process = None
         self.glances_tmp_file = None
@@ -88,44 +136,13 @@ class Profiler:
         self.monitoring_thread = threading.Thread(target=monitor_processes, daemon=True)
         self.monitoring_thread.start()
 
-    def terminate_ollama(self):
-        assert isinstance(self.ollama_model_id, str)
-        print(f"Stopping model {self.ollama_model_id}...")
-        subprocess.run(["ollama", "stop", self.ollama_model_id.split("/")[1]])
-
-    def start_ollama(self):
-        print("Starting Ollama...")
-        env = os.environ.copy()
-        env["OLLAMA_CONTEXT_LENGTH"] = "40960"
-        env["OLLAMA_FLASH_ATTENTION"] = "1"
-        env["OLLAMA_KV_CACHE_TYPE"] = "f16"
-        subprocess.Popen(
-            ["ollama", "serve"],
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        time.sleep(3)
-        model_id = self.ollama_model_id.split("/")[-1]
-
-        # Unload the model if currently running to reset K-V cache
-        running_models = ollama.ps()
-        for model in running_models.models:
-            if model_id == model.model:
-                self.terminate_ollama()
-                break
-
-        print(f"Preloading model {model_id}...")
-        ollama.generate(model=model_id)
-        print("Ollama started and preloaded.")
-
     def start_glances(self):
         """Start glances with json export"""
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             self.glances_tmp_file = tmp.name
         plugins = "cpu,gpu,mem,memswap,sensors,network,diskio,processlist"
         with open(self.glances_tmp_file, "w") as f:
-            backend_filter = f"|.*{self.llm_backend_filter}.*" if self.llm_backend_filter else ""
+            backend_filter = f"|.*{self.llm_backend.filter}.*" if self.llm_backend.filter else ""
             self.glances_process = subprocess.Popen(
                 [
                     "glances",
@@ -263,11 +280,7 @@ class Profiler:
         if process["pid"] in self.target_pids:
             return True
         if self.llm_backend is not None:
-            if self.llm_backend == "ollama":
-                target = process["name"]
-            elif self.llm_backend == "mlc":
-                target = " ".join(process["cmdline"])
-            return bool(re.search(self.llm_backend_filter, target))
+            return self.llm_backend.is_glances_process(process)
         return False
 
     def save_jsonl(self, lines, path_name):
@@ -335,8 +348,8 @@ class Profiler:
         if self.power_tmp_file is not None:
             os.remove(self.power_tmp_file)
             self.power_tmp_file = None
-        if self.ollama_model_id is not None:
-            self.terminate_ollama()
+        if self.llm_backend is not None:
+            self.llm_backend.reset()
         
 
     def start_profiling(self):
@@ -346,8 +359,8 @@ class Profiler:
             self.start_glances()
             if self.power_output_path is not None:
                 self.start_power_measurement()
-            if self.ollama_model_id is not None:
-                self.start_ollama()
+            if self.llm_backend is not None and self.preload_model_id is not None:
+                self.llm_backend.start(self.preload_model_id.split("/")[-1])
             self.start_target_script()
 
             # Stop
@@ -383,7 +396,7 @@ sudo python -m profiler.profile \\
 --frequency 100 \\
 --capture_stdout \\
 --llm_backend ollama \\
---ollama_model_id ollama_chat/qwen3:8b
+--preload_model_id ollama_chat/qwen3:8b
 """
 
     parser = argparse.ArgumentParser(
@@ -397,8 +410,8 @@ sudo python -m profiler.profile \\
     parser.add_argument("--power_output_path", type=str, default=None, help="Path to save the processed power profile log in JSONL format.")
     parser.add_argument("--interval", type=int, default=1000, help="Samples resource metrics every <interval> milliseconds")
     parser.add_argument("--capture_stdout", action=argparse.BooleanOptionalAction, help="Print the output of the agent to stdout.")
-    parser.add_argument("--llm_backend", type=str, default=None, choices=LLM_BACKENDS, help="LLM backend to include in profiling results.")
-    parser.add_argument("--ollama_model_id", type=str, default=None, help="If specified, start Ollama server and preload the model. The model will also be stopped at the end.")
+    parser.add_argument("--llm_backend", type=str, default=None, choices=LlmBackend.ALL, help="LLM backend to include in profiling results. Required for preload_model_id")
+    parser.add_argument("--preload_model_id", type=str, default=None, help="If specified, start the llm backend, unload then preload the model, and also unload it at the end.")
     
     args = parser.parse_args()
 
@@ -417,7 +430,7 @@ sudo python -m profiler.profile \\
         interval=args.interval,
         capture_stdout=args.capture_stdout,
         llm_backend=args.llm_backend,
-        ollama_model_id=args.ollama_model_id,
+        preload_model_id=args.preload_model_id,
     )
     success = profiler.start_profiling()
     if success:
