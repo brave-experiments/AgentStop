@@ -2,6 +2,7 @@ import argparse
 import pandas as pd
 import subprocess
 import time
+import traceback
 
 from pathlib import Path
 from profiler.profile import LlmBackend, Profiler
@@ -57,32 +58,37 @@ sudo python -m profiler.profile_and_analyze_multiple \\
             power_log_path = f"{base_path}/raw/smolagent_powermetrics.jsonl"
             analysis_output_path = f"{base_path}/analysis"
 
+            prob = prob.replace('"', '\\"')
             script = args.script_template.format(prompt=f'"{prob}"', agent_trace_path=agent_trace_path)
 
-            print(f"\n** Profiling started for script:\n{script}\n")
-            profiler = Profiler(
-                script,
-                ".*python.*",
-                glances_log_path,
-                power_output_path=power_log_path,
-                interval=100,
-                capture_stdout=True,
-                llm_backend=LlmBackend.OLLAMA,
-                preload_model_id=args.preload_model_id,
-            )
-            profiler.start_profiling()
+            try:
+                print(f"\n** Profiling started for script:\n{script}\n")
+                profiler = Profiler(
+                    script,
+                    ".*python.*",
+                    glances_log_path,
+                    power_output_path=power_log_path,
+                    interval=100,
+                    capture_stdout=True,
+                    llm_backend=LlmBackend.OLLAMA,
+                    preload_model_id=args.preload_model_id,
+                )
+                profiler.start_profiling()
 
-            print(f"\n** Producing analytics... **\n")
-            analyzer = Analyzer(
-                args.device_type,
-                glances_log_path,
-                agent_trace_path,
-                power_log_path=power_log_path,
-                model_id=None,
-                full_execution=False,
-                output_dir=analysis_output_path,
-                output_ext=["png", "pdf"],
-                display_plots=False,
-                display_summary=False,
-            )
-            analyzer.analyze()
+                print(f"\n** Producing analytics... **\n")
+                analyzer = Analyzer(
+                    args.device_type,
+                    glances_log_path,
+                    agent_trace_path,
+                    power_log_path=power_log_path,
+                    model_id=None,
+                    full_execution=False,
+                    output_dir=analysis_output_path,
+                    output_ext=["png", "pdf"],
+                    display_plots=False,
+                    display_summary=False,
+                )
+                analyzer.analyze()
+            except:
+                print(f"Exception occurred for problem {idx}: {prob}")
+                traceback.print_exc()
