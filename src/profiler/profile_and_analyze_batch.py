@@ -53,9 +53,9 @@ sudo python -m profiler.profile_and_analyze_multiple \\
         print(f"** Run {run_idx + 1}/{args.num_repeats} **")
         for idx, prob in enumerate(problems):
             base_path = f"{args.base_output_path}/{idx}/run_{run_idx}"
-            glances_log_path = f"{base_path}/raw/smolagent_glances.jsonl"
-            agent_trace_path = f"{base_path}/raw/smolagent_trace.json"
-            power_log_path = f"{base_path}/raw/smolagent_powermetrics.jsonl"
+            glances_log_path = f"{base_path}/raw/glances.jsonl"
+            agent_trace_path = f"{base_path}/raw/trace.json"
+            power_log_path = f"{base_path}/raw/power.jsonl"
             analysis_output_path = f"{base_path}/analysis"
 
             prob = prob.replace('"', '\\"')

@@ -32,7 +32,8 @@ def create_model(
         model_type="litellm",
         api_key=None,
         api_base=None,
-        max_tokens=40960, # Ollama Qwen 3's context length limit
+        context_size=40960, # Ollama Qwen 3's context length limit
+        max_tokens=512, # Max number of tokens to generate per LLM call
         thinking=False,
         temperature=0.0,
         top_p=1.0,
@@ -61,7 +62,7 @@ def create_model(
             api_key=api_key,
             api_base=api_base,
             max_tokens=max_tokens,
-            num_ctx=max_tokens,
+            num_ctx=context_size,
             temperature=temperature,
             top_p=top_p,
             top_k=top_k,

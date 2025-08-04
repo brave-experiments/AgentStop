@@ -335,9 +335,10 @@ Write your short description here:
                 
                 agent_output = attributes.get(OUTPUT_VALUE, None)
                 if agent_output is not None:
-                    match = re.search(r"output='(.*?)'", agent_output)
+                    pattern = r"output=('[^']*'|\"[^\"]*\"|\[[^\]]*\]|\{[^}]*\}|\([^)]*\)|[^,)]+)"
+                    match = re.search(pattern, agent_output)
                     if match:
-                        agent_output = match.group(1)
+                        agent_output = match.group(2)
                 
                 self.agent_task = agent_task
                 self.agent_output = agent_output
@@ -1009,11 +1010,15 @@ Write your short description here:
         )
 
     def summarize_stats(self):
+        agent_trace = self.get_topmost_spans()
         df = self.glances_df
         ts = df["timestamp_plot"]
         pwr_df = self.power_df
 
+        num_LLM_calls = sum(1 for step in agent_trace if step["kind"] == "LLM")
         stats = {
+            "agent_output": self.agent_output,
+            "num_LLM_calls": num_LLM_calls,
             "duration_sec": ts.iloc[-1] - ts.iloc[0],
             "peak_process_mem_gb": df["processes_mem_plot"].max(),
             "peak_system_mem_gb": df["mem_used_plot"].max(),
@@ -1049,7 +1054,7 @@ Write your short description here:
                 stats[k] = int(v)
         
         stats_txt = json.dumps(stats, indent=4)
-        with open(f"{self.output_dir}/summary.txt", "w") as f:
+        with open(f"{self.output_dir}/summary.json", "w") as f:
             f.write(stats_txt)
         if self.display_summary:
             print("*** Summary ***")
@@ -1159,7 +1164,7 @@ Write your short description here:
                     stat[k] = int(v)
 
         stats_txt = json.dumps(stats, indent=4)
-        with open(f"{self.output_dir}/step_summary.txt", "w") as f:
+        with open(f"{self.output_dir}/step_summary.json", "w") as f:
             f.write(stats_txt)
         if self.display_summary:
             print("*** Step-by-step summary ***")
