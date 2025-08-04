@@ -338,7 +338,7 @@ Write your short description here:
                     pattern = r"output=('[^']*'|\"[^\"]*\"|\[[^\]]*\]|\{[^}]*\}|\([^)]*\)|[^,)]+)"
                     match = re.search(pattern, agent_output)
                     if match:
-                        agent_output = match.group(2)
+                        agent_output = match.group(1)
                 
                 self.agent_task = agent_task
                 self.agent_output = agent_output
