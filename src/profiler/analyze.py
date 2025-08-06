@@ -244,7 +244,6 @@ class Analyzer:
             d = {
                 "timestamp": ts,
                 "gpu_usage": l["GR3D"]["val"],
-                "gpu_freq": l["GR3D"]["frq"] / 1000.0,
             }
 
             for k, v in l["WATT"].items():
@@ -814,9 +813,6 @@ Write your short description here:
                 y_axis_label="GPU Utilization (%)",
                 metrics=[("gpu_usage", "GPU Utilization (%)")],
                 power=True,
-                second_y_axis_label="GPU Frequency (MHz)",
-                second_metrics=[("gpu_freq", "GPU Frequency (MHz)", {"color": "green", "linestyle": "-."})],
-                second_metrics_power=True,
             )
         
         self.plot_metrics(
@@ -919,7 +915,7 @@ Write your short description here:
             return [
                 (c, c[5:]) for c in self.power_df.columns.to_list() if (
                     c.startswith("temp_") and
-                    c[5:] in ["CPU", "GPU", "Tboard", "Tdiode"]
+                    c[5:].lower() in ["cpu", "gpu", "tboard", "tdiode"]
                 )
             ]
 
@@ -1149,7 +1145,7 @@ Write your short description here:
                     metrics.extend(
                         [("avg_gpu_usage_pct", power_df["gpu_usage"].mean())] +
                         [(f"avg_{m}_celcius", power_df[m].mean()) for m, _ in self.get_temperature_metrics()] +
-                        [e for t in [avg_med_std(power_df[m], m) for m, _ in self.get_power_metrics()] for e in t] +
+                        [e for t in [avg_med_std([(power_df[m], m)]) for m, _ in self.get_power_metrics()] for e in t] +
                         energy(power_df["timestamp"], energy_stats)
                     )
                 

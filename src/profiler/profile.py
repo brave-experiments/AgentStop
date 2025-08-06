@@ -11,6 +11,7 @@ import platform
 import plistlib
 import psutil
 import re
+import shutil
 import shlex
 import signal
 import subprocess
