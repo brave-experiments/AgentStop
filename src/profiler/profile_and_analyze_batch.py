@@ -58,6 +58,9 @@ sudo python -m profiler.profile_and_analyze_multiple \\
             power_log_path = f"{base_path}/raw/power.jsonl"
             analysis_output_path = f"{base_path}/analysis"
 
+            Path(f"{base_path}/raw").mkdir(parents=True, exist_ok=True)
+            Path(f"{base_path}/analysis").mkdir(parents=True, exist_ok=True)
+
             prob = prob.replace('"', '\\"')
             script = args.script_template.format(prompt=f'"{prob}"', agent_trace_path=agent_trace_path)
 
