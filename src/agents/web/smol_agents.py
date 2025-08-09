@@ -4,6 +4,7 @@ import os
 import time
 import yaml
 
+from agents.llm_backend import LlmBackend
 from dotenv import load_dotenv
 from profiler.instrumentor import CustomSmolagentsInstrumentor
 from rich.rule import Rule
@@ -221,6 +222,7 @@ class BasicCascadeAgent(WebCodeAgent):
         model_ids,
         model_type,
         should_compress_context=False,
+        llm_backend=None,
         **kwargs,
     ):
         assert len(model_ids) >= 2
@@ -228,6 +230,7 @@ class BasicCascadeAgent(WebCodeAgent):
         self.model_ids = model_ids
         self.model_idx = 0
         self.should_compress_context = should_compress_context
+        self.llm_backend = LlmBackend.create(llm_backend) if llm_backend is not None else None
 
     def cascade(self):
         if self.model_idx == len(self.model_ids) - 1:
@@ -237,6 +240,12 @@ class BasicCascadeAgent(WebCodeAgent):
         self.model_idx += 1
         self.model_id = self.model_ids[self.model_idx]
         print(f"\n*** Cascading to model {self.model_id} ***\n")
+        if self.llm_backend is not None: # Ollama doesn't need this step
+            model_id = self.model_id
+            if self.model_type == "litellm" and model_id.count("/") > 1 and model_id.startswith("openai/"):
+                model_id = model_id.split("/", 1)[1]
+            self.llm_backend.start(model_id)
+        
         self.model = create_model(
             self.model_id,
             self.model_type,
@@ -408,6 +417,7 @@ python -m agents.web.smol_agents \\
     parser.add_argument("--max_steps", type=int, default=10, help="Maximum number of steps for the agent.")
     parser.add_argument("--fixed_cascade_step", type=int, default=None, help="Fixed step number to cascade if using fixed cascade agent.")
     parser.add_argument("--api_base", type=str, default=None, help="API base for LiteLLM.")
+    parser.add_argument("--llm_backend", type=str, choices=LlmBackend.subclasses.keys(), default=None, help="LLM backend that will be used. This is only needed for cascading.")
     parser.add_argument(
         "--compression_ratio",
         type=float,
@@ -431,6 +441,7 @@ python -m agents.web.smol_agents \\
         top_k=args.top_k,
         min_p=args.min_p,
         cascade_step=args.fixed_cascade_step,
+        llm_backend=args.llm_backend,
     )
     if args.trace_path is not None:
         agent.enable_tracing(args.trace_path)

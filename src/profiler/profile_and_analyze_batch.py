@@ -41,6 +41,7 @@ sudo python -m profiler.profile_and_analyze_multiple \\
     parser.add_argument("--base_output_path", type=str, required=True, help="Base path to store output.")
     parser.add_argument("--preload_model_id", type=str, default=None, help="Model id for the profiler.")
     parser.add_argument("--device_type", type=str, required=True, choices=DeviceType.ALL, help="Type of device for analysis.")
+    parser.add_argument("--llm_backend", type=str, default=None, choices=LlmBackend.subclasses.keys(), help="LLM backend.")
     args = parser.parse_args()
 
     df = pd.read_csv(args.input_path)
@@ -73,7 +74,7 @@ sudo python -m profiler.profile_and_analyze_multiple \\
                     power_output_path=power_log_path,
                     interval=100,
                     capture_stdout=True,
-                    llm_backend=LlmBackend.OLLAMA,
+                    llm_backend=args.llm_backend,
                     preload_model_id=args.preload_model_id,
                 )
                 profiler.start_profiling()

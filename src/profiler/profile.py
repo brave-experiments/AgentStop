@@ -5,13 +5,10 @@ System performance profiling using glances.
 
 import argparse
 import json
-import ollama
 import os
 import platform
 import plistlib
 import psutil
-import re
-import shutil
 import shlex
 import signal
 import subprocess
@@ -20,64 +17,9 @@ import threading
 import tempfile
 import time
 import traceback
+from agents.llm_backend import LlmBackend
 from datetime import timezone
 from pathlib import Path
-
-class LlmBackend:
-    OLLAMA = "Ollama"
-    MLC = "MLC"
-    ALL = [OLLAMA, MLC]
-    PROCESS_FILTER = {
-        OLLAMA: r"(o|O)llama",
-        MLC: r"mlc_llm",
-    }
-
-    def __init__(self, backend):
-        assert backend in self.ALL
-        self.backend = backend
-        self.filter = self.PROCESS_FILTER[backend]
-
-    def start(self, model_id):
-        if self.backend != self.OLLAMA:
-            raise NotImplementedError("Only Ollama is supported for now.")
-
-        print("Starting Ollama...")
-        env = os.environ.copy()
-        env["OLLAMA_CONTEXT_LENGTH"] = "40960"
-        env["OLLAMA_FLASH_ATTENTION"] = "1"
-        env["OLLAMA_KV_CACHE_TYPE"] = "f16"
-        subprocess.Popen(
-            ["ollama", "serve"],
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        time.sleep(3)
-        
-        # Unload all existing models to reset K-V cache
-        self.reset()
-
-        print(f"Preloading model {model_id}...")
-        ollama.generate(model=model_id)
-        print("Ollama started and preloaded.")
-
-    def reset(self):
-        if self.backend != self.OLLAMA:
-            raise NotImplementedError("Only Ollama is supported for now.")
-
-        models = ollama.ps()
-        for model in ollama.ps().models:
-            model_id = model.model
-            print(f"Stopping model {model_id}...")
-            subprocess.run(["ollama", "stop", model_id])
-            time.sleep(1)
-
-    def is_glances_process(self, process):
-        if self.backend == self.OLLAMA:
-            target = process["name"]
-        elif self.backend == self.MLC:
-            target = " ".join(process["cmdline"])
-        return bool(re.search(self.filter, target))
 
 class Profiler:
     def __init__(
@@ -99,7 +41,7 @@ class Profiler:
         self.capture_stdout = capture_stdout
 
         if llm_backend is not None:
-            self.llm_backend = LlmBackend(llm_backend)
+            self.llm_backend = LlmBackend.create(llm_backend)
         self.preload_model_id = preload_model_id
 
         self.glances_process = None
@@ -143,7 +85,8 @@ class Profiler:
             self.glances_tmp_file = tmp.name
         plugins = "cpu,gpu,mem,memswap,sensors,network,diskio,processlist"
         with open(self.glances_tmp_file, "w") as f:
-            backend_filter = f"|.*{self.llm_backend.filter}.*" if self.llm_backend.filter else ""
+            backend_filter = self.llm_backend.process_filter
+            backend_filter = f"|.*{backend_filter}.*" if backend_filter is not None else ""
             self.glances_process = subprocess.Popen(
                 [
                     "glances",
@@ -350,7 +293,7 @@ class Profiler:
             os.remove(self.power_tmp_file)
             self.power_tmp_file = None
         if self.llm_backend is not None:
-            self.llm_backend.reset()
+            self.llm_backend.stop()
         
 
     def start_profiling(self):
@@ -361,7 +304,7 @@ class Profiler:
             if self.power_output_path is not None:
                 self.start_power_measurement()
             if self.llm_backend is not None and self.preload_model_id is not None:
-                self.llm_backend.start(self.preload_model_id.split("/")[-1])
+                self.llm_backend.start(self.preload_model_id)
             self.start_target_script()
 
             # Stop
@@ -411,7 +354,7 @@ sudo python -m profiler.profile \\
     parser.add_argument("--power_output_path", type=str, default=None, help="Path to save the processed power profile log in JSONL format.")
     parser.add_argument("--interval", type=int, default=1000, help="Samples resource metrics every <interval> milliseconds")
     parser.add_argument("--capture_stdout", action=argparse.BooleanOptionalAction, help="Print the output of the agent to stdout.")
-    parser.add_argument("--llm_backend", type=str, default=None, choices=LlmBackend.ALL, help="LLM backend to include in profiling results. Required for preload_model_id")
+    parser.add_argument("--llm_backend", type=str, default=None, choices=LlmBackend.subclasses.keys(), help="LLM backend to include in profiling results. Required for preload_model_id")
     parser.add_argument("--preload_model_id", type=str, default=None, help="If specified, start the llm backend, unload then preload the model, and also unload it at the end.")
     
     args = parser.parse_args()
