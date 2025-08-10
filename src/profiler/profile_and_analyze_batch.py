@@ -5,7 +5,8 @@ import time
 import traceback
 
 from pathlib import Path
-from profiler.profile import LlmBackend, Profiler
+from agents.llm_backend import LlmBackend
+from profiler.profile import Profiler
 from profiler.analyze import Analyzer, DeviceType
 
 if __name__ == "__main__":

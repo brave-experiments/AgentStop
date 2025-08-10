@@ -19,6 +19,19 @@ def wait_for_http(url, timeout=60):
             raise TimeoutError(f"Timeout waiting for {url}")
         time.sleep(0.5)
 
+def wait_for_http_stop(url, timeout=60):
+    start_time = time.time()
+    while True:
+        try:
+            r = requests.get(url, timeout=1)
+            if r.status_code >= 500:
+                return
+        except requests.RequestException:
+            return
+        if time.time() - start_time > timeout:
+            raise TimeoutError(f"Timeout waiting for {url} to stop.")
+        time.sleep(0.5)
+
 class LlmBackend:
     subclasses = {}
 
@@ -105,7 +118,7 @@ class LlmBackendJetsonMLC(LlmBackend, key="JetsonMLC"):
     def stop(self):
         print("Stopping MLC server...")
         subprocess.run(shlex.split(f"docker exec {self.container_name} pkill -f mlc_llm"))
-        time.sleep(1)
+        wait_for_http_stop("http://0.0.0.0:8000/v1/models")
         
     def is_glances_process(self, process):
         target = " ".join(process["cmdline"])
