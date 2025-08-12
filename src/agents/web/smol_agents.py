@@ -5,6 +5,13 @@ import time
 import yaml
 
 from agents.llm_backend import LlmBackend
+from agents.utils import (
+    create_tools,
+    get_custom_arg_parser,
+    CustomLiteLLMModel,
+    NO_THINK,
+    WebAgent,
+)
 from dotenv import load_dotenv
 from profiler.instrumentor import CustomSmolagentsInstrumentor
 from rich.rule import Rule
@@ -12,19 +19,12 @@ from rich.text import Text
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 from smolagents import (
     CodeAgent,
-    LiteLLMModel,
     MLXModel,
     ToolCallingAgent,
 )
 from smolagents.agents import RunResult
 from smolagents.memory import ActionStep, PlanningStep
 from smolagents.monitoring import LogLevel, Timing
-from .utils import (
-    create_tools,
-    get_custom_arg_parser,
-    NO_THINK,
-    WebAgent,
-)
 
 load_dotenv()
 
@@ -40,6 +40,8 @@ def create_model(
         top_p=1.0,
         top_k=20,
         min_p=0.0,
+        logprobs=False,
+        top_logprobs=0,
         **kwargs,
     ):
     if model_type == "mlx": # MLX is customized for Apple silicon
@@ -58,7 +60,7 @@ def create_model(
         flatten = None
         if "mlc" in model_id.lower():
             flatten = True
-        return LiteLLMModel(
+        return CustomLiteLLMModel(
             model_id=model_id,
             api_key=api_key,
             api_base=api_base,
@@ -68,6 +70,8 @@ def create_model(
             top_p=top_p,
             top_k=top_k,
             min_p=min_p,
+            logprobs=logprobs,
+            top_logprobs=top_logprobs,
             timeout=300, # Should be big enough to accomodate large models
             seed=47,
             flatten_messages_as_text=flatten,
@@ -76,6 +80,21 @@ def create_model(
         raise NotImplementedError(f"{model_type} is not supported.")
 
 class BasicSmolAgent(WebAgent):
+    subclasses = {}
+
+    def __init_subclass__(cls, key=None, **kwargs):
+        super().__init_subclass__(**kwargs)
+        reg_key = key or cls.__name__
+        if reg_key in cls.subclasses:
+            raise ValueError(f"Duplicate key '{reg_key}' registered")
+        cls.subclasses[reg_key] = cls
+
+    @classmethod
+    def create(cls, key, *args, **kwargs):
+        if key not in cls.subclasses:
+            raise ValueError(f"No backend registered under key '{key}'")
+        return cls.subclasses[key](*args, **kwargs)
+    
     def __init__(
         self,
         model_id,
@@ -171,7 +190,7 @@ class BasicSmolAgent(WebAgent):
         return self.agent.run(prompt, **kwargs)
 
 
-class WebCodeAgent(BasicSmolAgent):
+class WebCodeAgent(BasicSmolAgent, key="code"):
     def __init__(self, *args, compression_ratio=1.0, **kwargs):
         self.compression_ratio = compression_ratio
         super().__init__(*args, **kwargs)
@@ -186,7 +205,7 @@ class WebCodeAgent(BasicSmolAgent):
         )
 
 
-class WebToolCallingAgent(WebCodeAgent):
+class WebToolCallingAgent(WebCodeAgent, key="tool"):
     def init_agent(self):
         self.agent = ToolCallingAgent(
             tools=self.tools,
@@ -197,7 +216,7 @@ class WebToolCallingAgent(WebCodeAgent):
         )
 
 
-class WebManagedAgent(WebCodeAgent):
+class WebManagedAgent(WebCodeAgent, key="managed"):
     def init_agent(self):
         search_agent = ToolCallingAgent(
             tools=self.tools,
@@ -216,7 +235,7 @@ class WebManagedAgent(WebCodeAgent):
         )
 
 
-class BasicCascadeAgent(WebCodeAgent):
+class BasicCascadeAgent(WebCodeAgent, key="basic_cascade"):
     def __init__(
         self,
         model_ids,
@@ -271,7 +290,7 @@ class BasicCascadeAgent(WebCodeAgent):
         raise NotImplementedError("You need to implement the context compression method.")
 
 
-class FixedCascadeAgent(BasicCascadeAgent):
+class FixedCascadeAgent(BasicCascadeAgent, key="fixed_cascade"):
     '''
         Only cascade exactly once at a fixed step number.
         If cascade_step is 1, the model will be cascaded after step 1 is finished.
@@ -290,7 +309,26 @@ class FixedCascadeAgent(BasicCascadeAgent):
         )
 
 
-class FixedCascadeAgentWithCompression(FixedCascadeAgent):
+class MeanLogProbsCascadeAgent(BasicCascadeAgent, key="mean_log_probs"):
+    '''
+        Cascade whenever the current generation's log prob's mean is below a threshold.
+    '''
+    def __init__(self, *args, mean_threshold=0.0, **kwargs):
+        super().__init__(*args, logprobs=True, top_logprobs=0, **kwargs)
+        self.mean_threshold = mean_threshold
+    
+    def should_cascade(self, step):
+        if self.model_idx == len(self.model_ids):
+            return False
+        return False
+        # return (
+        #     isinstance(step, ActionStep) and
+        #     not step.is_final_answer and
+        #     step.step_number == self.cascade_step
+        # )
+
+
+class FixedCascadeAgentWithCompression(FixedCascadeAgent, key="fixed_cascade_compress"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, should_compress_context=True, **kwargs)
 
@@ -344,22 +382,6 @@ I need to avoid repeating what has already been tried in the report.
         self.agent.memory.steps.append(planning_step)
 
 
-class AgentType:
-    CODE = "code"
-    TOOL = "tool"
-    MANAGED = "managed"
-    FIXED_CASCADE = "fixed_cascade"
-    FIXED_CASCADE_COMPRESS = "fixed_cascade_compress"
-
-AGENT_MAP = {
-    AgentType.CODE: WebCodeAgent,
-    AgentType.TOOL: WebToolCallingAgent,
-    AgentType.MANAGED: WebManagedAgent,
-    AgentType.FIXED_CASCADE: FixedCascadeAgent,
-    AgentType.FIXED_CASCADE_COMPRESS: FixedCascadeAgentWithCompression,
-}
-
-
 if __name__ == "__main__":
     example_text = """
 Examples:
@@ -410,7 +432,7 @@ python -m agents.web.smol_agents \\
         "--agent_type",
         type=str,
         required=True,
-        choices=list(AGENT_MAP.keys()),
+        choices=list(BasicSmolAgent.subclasses.keys()),
         help=f"Type of agent.",
     )
     parser.add_argument("--planning_interval", type=int, default=None, help="Planning interval.")
@@ -426,7 +448,8 @@ python -m agents.web.smol_agents \\
     )
     args = parser.parse_args()
 
-    agent = AGENT_MAP[args.agent_type](
+    agent = BasicSmolAgent.create(
+        args.agent_type,
         model_id=args.model_id[0],
         model_ids=args.model_id,
         model_type=args.model_type,

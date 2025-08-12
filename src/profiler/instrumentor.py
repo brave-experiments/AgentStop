@@ -2,6 +2,10 @@
 import json
 import time
 
+from agents.utils import (
+    agglomerate_litellm_stream_deltas,
+    CustomLiteLLMModel,
+)
 from dataclasses import asdict, is_dataclass
 from openinference.instrumentation import get_attributes_from_context
 from openinference.instrumentation.helpers import safe_json_dumps
@@ -24,126 +28,12 @@ from openinference.instrumentation.smolagents._wrappers import (
 )
 from opentelemetry import trace
 from smolagents import (
-    LiteLLMModel,
     MLXModel,
     MultiStepAgent,
 )
-from smolagents.models import (
-    ChatMessage,
-    ChatMessageStreamDelta,
-    ChatMessageToolCall,
-    ChatMessageToolCallFunction,
-    ChatMessageToolCallStreamDelta,
-    MessageRole,
-)
-from smolagents.monitoring import TokenUsage
 from typing import Any, Callable, Mapping, Tuple
-from uuid import uuid4
 from wrapt import wrap_function_wrapper
 
-def should_add_new_tool_call(
-    current_calls: list[ChatMessageToolCallStreamDelta],
-    call_delta,
-) -> bool:
-    if len(current_calls) == 0:
-        return True
-    current_call = current_calls[-1]
-
-    if (
-        call_delta.id is not None and
-        current_call.id is not None and
-        call_delta.id != current_call.id
-    ):
-        return True
-
-    if call_delta.function is not None:
-        cur_name = current_call.function.name
-        delta_name = call_delta.function.name
-        if cur_name and delta_name != cur_name:
-            return True
-
-        current_arg = current_call.function.arguments
-        delta_arg = call_delta.function.arguments
-        if current_arg and delta_arg:
-            if current_arg.strip().startswith("{"):
-                try:
-                    json.loads(current_arg)
-                    return True
-                except:
-                    return False
-    
-    return False
-        
-# Fixing a bug with parallel function calling in agglomerate_stream_deltas
-# See https://github.com/huggingface/smolagents/issues/1569
-def agglomerate_litellm_stream_deltas(
-    stream_deltas: list[ChatMessageStreamDelta], role: MessageRole = MessageRole.ASSISTANT
-) -> ChatMessage:
-    """
-    Agglomerate a list of stream deltas into a single stream delta.
-    """
-    accumulated_tool_calls: dict[int, list[ChatMessageToolCallStreamDelta]] = {}
-    accumulated_content = ""
-    total_input_tokens = 0
-    total_output_tokens = 0
-    for stream_delta in stream_deltas:
-        if stream_delta.token_usage:
-            total_input_tokens += stream_delta.token_usage.input_tokens
-            total_output_tokens += stream_delta.token_usage.output_tokens
-        if stream_delta.content:
-            accumulated_content += stream_delta.content
-        if stream_delta.tool_calls:
-            for tool_call_delta in stream_delta.tool_calls:  # Normally there should be only one call at a time
-                # Extend accumulated_tool_calls list to accommodate the new tool call if needed
-                idx = tool_call_delta.index
-                if idx is not None:
-                    # Check to see if a new tool call needs to be added
-                    if idx not in accumulated_tool_calls:
-                        accumulated_tool_calls[idx] = []
-                    calls = accumulated_tool_calls[idx]
-                    if should_add_new_tool_call(calls, tool_call_delta):
-                        calls.append(ChatMessageToolCallStreamDelta(
-                            id=tool_call_delta.id,
-                            type=tool_call_delta.type,
-                            function=ChatMessageToolCallFunction(name="", arguments=""),
-                        ))
-
-                    # Update the last tool call at the specific index if it's incomplete
-                    tool_call = calls[-1]
-                    if tool_call_delta.id:
-                        tool_call.id = tool_call_delta.id
-                    if tool_call_delta.type:
-                        tool_call.type = tool_call_delta.type
-                    func = tool_call_delta.function
-                    if func:
-                        if func.name and len(func.name) > 0:
-                            tool_call.function.name = func.name
-                        if func.arguments:
-                            tool_call.function.arguments += func.arguments
-                else:
-                    raise ValueError(f"Tool call index is not provided in tool delta: {tool_call_delta}")
-
-    return ChatMessage(
-        role=role,
-        content=accumulated_content,
-        tool_calls=[
-            ChatMessageToolCall(
-                function=ChatMessageToolCallFunction(
-                    name=tool_call_stream_delta.function.name,
-                    arguments=tool_call_stream_delta.function.arguments,
-                ),
-                id=tool_call_stream_delta.id or str(uuid4()), # None IDs prevent parallel calls
-                type="function",
-            )
-            for tool_call_stream_deltas in accumulated_tool_calls.values()
-            for tool_call_stream_delta in tool_call_stream_deltas
-            if tool_call_stream_delta.function
-        ],
-        token_usage=TokenUsage(
-            input_tokens=total_input_tokens,
-            output_tokens=total_output_tokens,
-        ),
-    )
 
 class _GeneratorStepWrapper:
     """Wrap each step of a generator in its own span"""
@@ -328,21 +218,22 @@ class CustomSmolagentsInstrumentor(SmolagentsInstrumentor):
                         span.set_status(trace.StatusCode.OK)
 
             self.model.stream_generate = custom_mlx_stream_generate
-        elif self.stream_llm and isinstance(self.model, LiteLLMModel):
-            # Undo super's wrap
-            setattr(LiteLLMModel, "generate", self._original_model_generate_methods[LiteLLMModel])
-            
-            # Wrap our replacement
+        elif self.stream_llm and isinstance(self.model, CustomLiteLLMModel):
+            self._original_model_generate_methods[CustomLiteLLMModel] = getattr(
+                CustomLiteLLMModel, "generate"
+            )
+
+            # Wrap our custom wrapper
             wrap_function_wrapper(
-                module="smolagents",
-                name=f"{LiteLLMModel.__name__}.generate",
+                CustomLiteLLMModel,
+                name="generate",
                 wrapper=_SmolLiteLLMGenerateWrapper(tracer=self._tracer),
             )
 
-            # Redo the super's wrap
+            # Wrap default wrapper
             wrap_function_wrapper(
-                module="smolagents",
-                name=f"{LiteLLMModel.__name__}.generate",
+                CustomLiteLLMModel,
+                name="generate",
                 wrapper=_ModelWrapper(tracer=self._tracer),
             )
 
@@ -356,6 +247,3 @@ class CustomSmolagentsInstrumentor(SmolagentsInstrumentor):
         if self._original_mlxmodel_stream_generate is not None:
             self.model = self._original_mlxmodel_stream_generate
             self._original_mlxmodel_stream_generate = None
-
-        if self._original_model_generate_methods is not None:
-            setattr(LiteLLMModel, "generate", self._original_model_generate_methods[LiteLLMModel])
