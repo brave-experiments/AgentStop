@@ -57,25 +57,26 @@ def create_model(
             sampler=sampler,
         )
     elif model_type == "litellm":
-        flatten = None
-        if "mlc" in model_id.lower():
-            flatten = True
-        return CustomLiteLLMModel(
-            model_id=model_id,
-            api_key=api_key,
-            api_base=api_base,
-            max_tokens=max_tokens,
-            num_ctx=context_size,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            min_p=min_p,
-            logprobs=logprobs,
-            top_logprobs=top_logprobs,
-            timeout=300, # Should be big enough to accomodate large models
-            seed=47,
-            flatten_messages_as_text=flatten,
-        )
+        import litellm
+        litellm.drop_params=True # To ensure any unsupported params would be dropped
+        args = {
+            "model_id": model_id,
+            "api_key": api_key,
+            "api_base": api_base,
+            "max_tokens": max_tokens,
+            "num_ctx": context_size,
+            "temperature": temperature,
+            "top_p": top_p,
+            "top_k": top_k,
+            "min_p": min_p,
+            "logprobs": logprobs,
+            "timeout": 300, # Should be big enough to accomodate large models
+            "seed": 47,
+            "flatten_messages_as_text": True,
+        }
+        if logprobs:
+            args["top_logprobs"] = top_logprobs
+        return CustomLiteLLMModel(**args)
     else:
         raise NotImplementedError(f"{model_type} is not supported.")
 
@@ -239,7 +240,6 @@ class BasicCascadeAgent(WebCodeAgent, key="basic_cascade"):
     def __init__(
         self,
         model_ids,
-        model_type,
         should_compress_context=False,
         llm_backend=None,
         **kwargs,
@@ -277,7 +277,7 @@ class BasicCascadeAgent(WebCodeAgent, key="basic_cascade"):
 
     def run(self, prompt, **kwargs):
         for step in self.agent.run(prompt, stream=True, **kwargs):
-            if self.should_cascade(step):
+            if self.model_idx < len(self.model_ids) - 1 and self.should_cascade(step):
                 if self.should_compress_context:
                     self.compress_context(original_task=prompt, **kwargs)
                 self.cascade()
@@ -286,53 +286,7 @@ class BasicCascadeAgent(WebCodeAgent, key="basic_cascade"):
     def should_cascade(self, step):
         raise NotImplementedError("You need to implement the cascading criteria.")
 
-    def compress_context(self, original_task=None):
-        raise NotImplementedError("You need to implement the context compression method.")
-
-
-class FixedCascadeAgent(BasicCascadeAgent, key="fixed_cascade"):
-    '''
-        Only cascade exactly once at a fixed step number.
-        If cascade_step is 1, the model will be cascaded after step 1 is finished.
-        Step number starts at 1.
-    '''
-    def __init__(self, cascade_step, *args, **kwargs):
-        assert isinstance(cascade_step, int) and cascade_step >= 1
-        super().__init__(*args, **kwargs)
-        self.cascade_step = cascade_step
-    
-    def should_cascade(self, step):
-        return (
-            isinstance(step, ActionStep) and
-            not step.is_final_answer and
-            step.step_number == self.cascade_step
-        )
-
-
-class MeanLogProbsCascadeAgent(BasicCascadeAgent, key="mean_log_probs"):
-    '''
-        Cascade whenever the current generation's log prob's mean is below a threshold.
-    '''
-    def __init__(self, *args, mean_threshold=0.0, **kwargs):
-        super().__init__(*args, logprobs=True, top_logprobs=0, **kwargs)
-        self.mean_threshold = mean_threshold
-    
-    def should_cascade(self, step):
-        if self.model_idx == len(self.model_ids):
-            return False
-        return False
-        # return (
-        #     isinstance(step, ActionStep) and
-        #     not step.is_final_answer and
-        #     step.step_number == self.cascade_step
-        # )
-
-
-class FixedCascadeAgentWithCompression(FixedCascadeAgent, key="fixed_cascade_compress"):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, should_compress_context=True, **kwargs)
-
-    def compress_context(self, original_task, **kwargs):
+    def compress_context(self, original_task=None, **kwargs):
         start_time = time.time()
         summary = []
         idx = 0
@@ -380,6 +334,68 @@ I need to avoid repeating what has already been tried in the report.
         # Edit agent's memory to remove all previous steps except the task step
         self.agent.memory.steps = self.agent.memory.steps[:1]
         self.agent.memory.steps.append(planning_step)
+
+
+class FixedCascadeAgent(BasicCascadeAgent, key="fixed_cascade"):
+    '''
+        Only cascade exactly once at a fixed step number.
+        If cascade_step is 1, the model will be cascaded after step 1 is finished.
+        Step number starts at 1.
+    '''
+    def __init__(self, cascade_step, *args, **kwargs):
+        assert isinstance(cascade_step, int) and cascade_step >= 1
+        super().__init__(*args, **kwargs)
+        self.cascade_step = cascade_step
+    
+    def should_cascade(self, step):
+        return (
+            isinstance(step, ActionStep) and
+            not step.is_final_answer and
+            step.step_number == self.cascade_step
+        )
+
+
+class FixedCascadeAgentWithCompression(FixedCascadeAgent, key="fixed_cascade_compress"):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, should_compress_context=True, **kwargs)
+
+
+class LogProbsCascadeAgent(BasicCascadeAgent, key="logprobs_cascade"):
+    '''
+        Retrieves logprobs from LLM
+    '''
+    def __init__(self, *args, threshold=0.0, **kwargs):
+        assert isinstance(threshold, float)
+        super().__init__(*args, logprobs=True, top_logprobs=0, **kwargs)
+        self.threshold = threshold
+    
+    def should_cascade(self, step):
+        return False
+    
+
+class MinLogProbsCascadeAgentWithCompression(LogProbsCascadeAgent, key="min_logprobs_cascade"):
+    '''
+        Cascades when the min logprobs is below a threshold.
+    '''
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, should_compress_context=True, **kwargs)
+    
+    def should_cascade(self, step):
+        if not isinstance(step, ActionStep) or step.is_final_answer:
+            return False
+        output = step.model_output_message
+        if output is None:
+            return False
+        raw = output.raw
+        if not isinstance(raw, dict):
+            return False
+        logprobs = raw.get("logprobs", None)
+        if logprobs is None or len(logprobs) == 0:
+            return False
+        
+        min_logprobs = min(l.content[0].logprob for l in logprobs)
+        print(f"Min logprobs: {min_logprobs}")
+        return min_logprobs < self.threshold
 
 
 if __name__ == "__main__":
@@ -438,6 +454,7 @@ python -m agents.web.smol_agents \\
     parser.add_argument("--planning_interval", type=int, default=None, help="Planning interval.")
     parser.add_argument("--max_steps", type=int, default=10, help="Maximum number of steps for the agent.")
     parser.add_argument("--fixed_cascade_step", type=int, default=None, help="Fixed step number to cascade if using fixed cascade agent.")
+    parser.add_argument("--logprobs_threshold", type=float, default=None, help="Logprobs threshold to cascade if using logprobs-based cascade agent.")
     parser.add_argument("--api_base", type=str, default=None, help="API base for LiteLLM.")
     parser.add_argument("--llm_backend", type=str, choices=LlmBackend.subclasses.keys(), default=None, help="LLM backend that will be used. This is only needed for cascading.")
     parser.add_argument(
@@ -464,6 +481,7 @@ python -m agents.web.smol_agents \\
         top_k=args.top_k,
         min_p=args.min_p,
         cascade_step=args.fixed_cascade_step,
+        logprobs_threshold=args.logprobs_threshold,
         llm_backend=args.llm_backend,
     )
     if args.trace_path is not None:

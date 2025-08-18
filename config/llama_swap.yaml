@@ -1,0 +1,33 @@
+# healthCheckTimeout: number of seconds to wait for a model to be ready to serve requests
+healthCheckTimeout: 60
+# - Valid log levels: debug, info, warn, error
+logLevel: info
+
+# startPort: sets the starting port number for the automatic ${PORT} macro.
+# - optional, default: 5800
+# - the ${PORT} macro can be used in model.cmd and model.proxy settings
+# - it is automatically incremented for every model that uses it
+startPort: 10001
+
+# macros: sets a dictionary of string:string pairs
+macros:
+  "ollama_for_llamacpp_path": /Users/USERNAME/llama.cpp/models # Please update this
+  "latest-llama": >
+    llama-server --port ${PORT} --ctx-size 40960 --batch-size 512 --n-gpu-layers -1 --threads 8 --flash-attn
+  "latest-mlx": >
+    mlx_lm.server --port ${PORT}
+  "latest-mlc": >
+    mlc_llm serve --port ${PORT} --mode interactive --overrides "max_total_seq_length=40960"
+
+models:
+  # keys are the model names used in API requests
+  "llamacpp/qwen3-1.7b":
+    cmd: ${latest-llama} --model ${ollama_for_llamacpp_path}/qwen3-1.7b.gguf
+  "llamacpp/qwen3-14b":
+    cmd: ${latest-llama} --model ${ollama_for_llamacpp_path}/qwen3-14b.gguf
+  "llamacpp/qwen3-30b":
+    cmd: ${latest-llama} --model ${ollama_for_llamacpp_path}/qwen3-30b-a3b-instruct-2507-q4_K_M.gguf
+  "mlx/qwen3-1.7b":
+    cmd: ${latest-mlx} --model mlx-community/Qwen3-1.7B-4bit
+  "mlc/qwen3-1.7b":
+    cmd: ${latest-mlc} HF://mlc-ai/Qwen3-1.7B-q4f16_1-MLC

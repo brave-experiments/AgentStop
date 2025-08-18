@@ -1,10 +1,21 @@
 import ollama
 import os
+import psutil
 import re
 import requests
 import shlex
 import subprocess
 import time
+
+def process_exists(name):
+    """Check if there's any running process that contains the given name."""
+    for proc in psutil.process_iter(["name"]):
+        try:
+            if proc.info["name"] and name.lower() in proc.info["name"].lower():
+                return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+    return False
 
 def wait_for_http(url, timeout=60):
     start_time = time.time()
@@ -56,7 +67,7 @@ class LlmBackend:
             self.stop()
         self._start(model_id)
 
-    def _start(model_id):
+    def _start(self, model_id):
         raise NotImplementedError()
 
     def stop(self):
@@ -102,61 +113,60 @@ class LlmBackendOllama(LlmBackend, key="Ollama"):
         return bool(re.search(self.process_filter, target))
 
 
-class LlmBackendOAICompatServer(LlmBackend, key="OAICompatServer"):
-    def __init__(self, process_filter, start_script, addr):
+class LlmBackendLlamaSwap(LlmBackend, key="LlamaSwap"):
+    def __init__(self, process_filter=r"llama-swap"):
         super().__init__(process_filter=process_filter)
-        self.process = None
-        self.start_script = start_script
-        self.addr = addr
+        self.addr = "http://127.0.0.1:8080"
 
     def _start(self, model_id):
-        print(f"Starting LLM server: {self.start_script}")
-        script = self.start_script.format(model_id=model_id)
-        self.process = subprocess.Popen(
-            shlex.split(script),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+        print("Starting llama-swap...")
+        if not process_exists(self.process_filter):
+            subprocess.Popen(
+                ["llama-swap", "-config", "../config/llama_swap.yaml", "-watch-config"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            wait_for_http(f"{self.addr}/health")
+            print("llama-swap started.")
+        else:
+            print("llama-swap already started.")
+
+        print(f"Preloading model {model_id}...")
+        response = requests.post(
+            f"{self.addr}/v1/completions",
+            headers={"Content-Type": "application/json"},
+            json={
+                "model": model_id,
+                "prompt": "",
+                "max_tokens": 0, 
+            }
         )
-        wait_for_http(f"{self.addr}/v1/models")
-        print("Server started.")
+        response.raise_for_status()
+
+        running = requests.get(f"{self.addr}/running").json()["running"]
+        is_ready = False
+        for run in running:
+            if run["model"] == model_id and run["state"] == "ready":
+                is_ready = True
+                break
+        if not is_ready:
+            raise Exception(f"Model {model_id} is not running!")
+        
+        print("Model preloaded.")
 
     def stop(self):
-        print("Stopping LLM server...")
-        if self.process is not None:
-            self.process.terminate()
-            self.process.wait()
-            self.process = None
-            print("LLM server stopped.")
-        else:
-            print("LLM server was not running.")
+        if process_exists(self.process_filter):
+            req = requests.get(f"{self.addr}/unload")
+            req.raise_for_status()
 
     def is_glances_process(self, process):
-        target = " ".join(process["cmdline"])
+        target = process["name"]
         return bool(re.search(self.process_filter, target))
 
 
-class LlmBackendMLXServer(LlmBackendOAICompatServer, key="MLX_Server"):
+class LlmBackendLlamaCpp(LlmBackendLlamaSwap, key="LlamaCpp"):
     def __init__(self):
-        super().__init__(
-            process_filter=r"mlx_lm",
-            start_script="mlx_lm.server --model {model_id}",
-            addr="http://127.0.0.1:8080",
-        )
-
-
-class LlmBackendMLCServer(LlmBackendOAICompatServer, key="MLC_Server"):
-    def __init__(self, device="auto"):
-        args = f' --device {device} --mode interactive --overrides "max_total_seq_length=40960"'
-        super().__init__(
-            process_filter=r"mlc_llm",
-            start_script="mlc_llm serve HF://{model_id}" + args,
-            addr="http://127.0.0.1:8000",
-        )
-
-
-class LlmBackendAppleMLCServer(LlmBackendMLC, key="Apple_MLC_Server"):
-    def __init__(self):
-        super().__init__(device="metal")
+        super().__init__(process_filter=r"(llama-swap|llama-server)")
 
 
 class LlmBackendJetsonMLC(LlmBackend, key="JetsonMLC"):

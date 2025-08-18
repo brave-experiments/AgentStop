@@ -152,6 +152,19 @@ class _SmolLiteLLMGenerateWrapper:
             span.set_attribute("first_token_ts", first_item_ts)
             span.set_status(trace.StatusCode.OK)
 
+            # Fix potential dangling stop_sequence issues
+            stop_sequences = kwargs.get("stop_sequences", None)
+            if stop_sequences is not None:
+                def remove_partial_suffix(text, sequences, min_overlap_ratio=0.75):
+                    for sequence in sequences:
+                        seq_len = len(sequence)
+                        min_overlap = int(seq_len * min_overlap_ratio)
+                        for overlap in range(seq_len - 1, min_overlap - 1, -1):
+                            if text.endswith(sequence[:overlap]):
+                                return text[:-overlap]  # Remove the dangling part
+                    return text
+                chat_msg.content = remove_partial_suffix(chat_msg.content, stop_sequences)
+
             return chat_msg
 
 

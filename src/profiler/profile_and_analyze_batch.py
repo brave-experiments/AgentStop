@@ -1,7 +1,5 @@
 import argparse
 import pandas as pd
-import subprocess
-import time
 import traceback
 
 from pathlib import Path

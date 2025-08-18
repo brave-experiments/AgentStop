@@ -439,8 +439,11 @@ Write your short description here:
                         except:
                             pass
             
+            span_name = attributes.get(LLM_MODEL_NAME, t["name"])
+            if span_name.count("/") > 1:
+                span_name = span_name.split("/", 1)[-1]
             span = {
-                "name": attributes.get(LLM_MODEL_NAME, t["name"]),
+                "name": span_name,
                 "level": id_to_level[t["span_id"]],
                 "start_time": (t["start_time"] - start_time) / SEC_TO_NANOSEC,
                 "end_time": (t["end_time"] - start_time) / SEC_TO_NANOSEC,
