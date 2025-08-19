@@ -12,7 +12,6 @@ import psutil
 import shlex
 import signal
 import subprocess
-import sys
 import threading
 import tempfile
 import time
@@ -20,6 +19,8 @@ import traceback
 from agents.llm_backend import LlmBackend
 from datetime import timezone
 from pathlib import Path
+
+SEC_TO_NANOSEC = 1_000_000_000
 
 class Profiler:
     def __init__(
@@ -29,6 +30,7 @@ class Profiler:
         glances_output_path,
         power_output_path=None,
         interval=1000, # ms
+        timeout=None, # sec
         capture_stdout=False,
         llm_backend=None,
         preload_model_id=None,
@@ -38,6 +40,7 @@ class Profiler:
         self.glances_output_path = glances_output_path
         self.power_output_path = power_output_path
         self.interval = interval
+        self.timeout = timeout
         self.capture_stdout = capture_stdout
 
         if llm_backend is not None:
@@ -140,13 +143,14 @@ class Profiler:
         )
 
     def start_tegrastats(self):
+        args = [
+            "python",
+            "-m", "profiler.jetson",
+            "--output_path", self.power_output_path,
+            "--interval", str(self.interval),
+        ]
         self.power_process = subprocess.Popen(
-            [
-                "python",
-                "-m", "profiler.jetson",
-                "--output_path", self.power_output_path,
-                "--interval", str(self.interval),
-            ],
+            args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -172,12 +176,11 @@ class Profiler:
             self.track_process_tree()
 
             # Wait for the script to complete
-            stdout, stderr = self.target_process.communicate()
+            _, stderr = self.target_process.communicate(timeout=self.timeout)
             end_time = time.time_ns()
-            self.stop_monitoring = True
 
             print(
-                f"Target script completed in {round((end_time - start_time) / 1_000_000_000)}s"
+                f"Target script completed in {round((end_time - start_time) / SEC_TO_NANOSEC)}s"
             )
             print(
                 f"Tracked {len(self.target_pids)} process IDs: {sorted(list(self.target_pids))}"
@@ -190,11 +193,17 @@ class Profiler:
                 print("Target script completed successfully")
 
             return True
-
+        except subprocess.TimeoutExpired:
+            print("Target script timed out. Terminating...")
+            if self.target_process is not None:
+                self.stop_process(self.target_process)
+            return False
         except Exception as e:
             print(f"Error running target script: {e}")
-            self.stop_monitoring = True
             return False
+        finally:
+            self.stop_monitoring = True
+            self.target_process = None
 
     def stop_process(self, process):
         process.send_signal(signal.SIGINT)
@@ -238,6 +247,7 @@ class Profiler:
     def save_glances_log(self):
         """Filter the glances log for processes created by the target script and time period"""
         # Read
+        assert self.glances_tmp_file is not None
         logs = []
         with open(self.glances_tmp_file, "r", encoding="utf-8") as f:
             for line in f:
@@ -271,6 +281,7 @@ class Profiler:
             raise NotImplementedError("Power measurement is not supported on your device.")
 
     def save_powermetrics(self):
+        assert self.power_tmp_file is not None
         with open(self.power_tmp_file, "rb") as f:
             data = f.read()
         logs = [plistlib.loads(d) for d in data.split(b'\x00')]
@@ -278,7 +289,7 @@ class Profiler:
             # Convert datetime object to Unix (ns) for JSON
             # Need to set timezone to UTC manually
             fixed_ts = log["timestamp"].replace(tzinfo=timezone.utc).timestamp()
-            log["timestamp"] = int(fixed_ts * 1_000_000_000)
+            log["timestamp"] = int(fixed_ts * SEC_TO_NANOSEC)
         self.save_jsonl(logs, self.power_output_path)
         print(f"Powermetrics log saved")
 
@@ -353,6 +364,7 @@ sudo python -m profiler.profile \\
     parser.add_argument("--glances_output_path", type=str, default=None, help="Path to save the glances log in JSONL.")
     parser.add_argument("--power_output_path", type=str, default=None, help="Path to save the processed power profile log in JSONL format.")
     parser.add_argument("--interval", type=int, default=1000, help="Samples resource metrics every <interval> milliseconds")
+    parser.add_argument("--timeout", type=int, default=None, help="Timeout (seconds) for target script. Default to no timeout.")
     parser.add_argument("--capture_stdout", action=argparse.BooleanOptionalAction, help="Print the output of the agent to stdout.")
     parser.add_argument("--llm_backend", type=str, default=None, choices=LlmBackend.subclasses.keys(), help="LLM backend to include in profiling results. Required for preload_model_id")
     parser.add_argument("--preload_model_id", type=str, default=None, help="If specified, start the llm backend, unload then preload the model, and also unload it at the end.")
@@ -372,6 +384,7 @@ sudo python -m profiler.profile \\
         args.glances_output_path,
         power_output_path=args.power_output_path,
         interval=args.interval,
+        timeout=args.timeout,
         capture_stdout=args.capture_stdout,
         llm_backend=args.llm_backend,
         preload_model_id=args.preload_model_id,
