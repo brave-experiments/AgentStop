@@ -72,6 +72,7 @@ sudo python -m profiler.profile_and_analyze_multiple \\
                     glances_log_path,
                     power_output_path=power_log_path,
                     interval=100,
+                    timeout=3600,
                     capture_stdout=True,
                     llm_backend=args.llm_backend,
                     preload_model_id=args.preload_model_id,
