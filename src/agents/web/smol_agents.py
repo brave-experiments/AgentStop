@@ -106,6 +106,7 @@ class BasicSmolAgent(WebAgent):
         api_base=None,
         thinking=False,
         planning_interval=None,
+        compression_ratio=1.0,
         **kwargs,
     ):
         super().__init__("SmolAgent", model_id, model_type=model_type, stream_llm=stream_llm, **kwargs)
@@ -119,13 +120,15 @@ class BasicSmolAgent(WebAgent):
             thinking=thinking,
             **kwargs,
         )
+
         self.should_add_no_think = (
             self.model_type == "litellm" and
             "qwen3" in self.model_id.lower() and
             "instruct" not in self.model_id.lower() and
             not self.thinking
         )
-        self.tools = create_tools(self.should_add_no_think, self.compression_ratio)
+        self.compression_ratio = compression_ratio
+        self.tools = create_tools(self.should_add_no_think, compression_ratio)
         self.planning_interval = planning_interval
         self.init_agent()
 
@@ -192,8 +195,7 @@ class BasicSmolAgent(WebAgent):
 
 
 class WebCodeAgent(BasicSmolAgent, key="code"):
-    def __init__(self, *args, compression_ratio=1.0, **kwargs):
-        self.compression_ratio = compression_ratio
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     def init_agent(self):
@@ -364,10 +366,10 @@ class LogProbsCascadeAgent(BasicCascadeAgent, key="logprobs_cascade"):
     '''
         Retrieves logprobs from LLM
     '''
-    def __init__(self, *args, threshold=0.0, **kwargs):
-        assert isinstance(threshold, float)
+    def __init__(self, *args, logprobs_threshold=None, **kwargs):
+        assert isinstance(logprobs_threshold, float)
         super().__init__(*args, logprobs=True, top_logprobs=0, **kwargs)
-        self.threshold = threshold
+        self.logprobs_threshold = logprobs_threshold
     
     def should_cascade(self, step):
         return False
@@ -395,7 +397,7 @@ class MinLogProbsCascadeAgentWithCompression(LogProbsCascadeAgent, key="min_logp
         
         min_logprobs = min(l.content[0].logprob for l in logprobs)
         print(f"Min logprobs: {min_logprobs}")
-        return min_logprobs < self.threshold
+        return min_logprobs < self.logprobs_threshold
 
 
 if __name__ == "__main__":

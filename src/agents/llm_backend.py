@@ -7,11 +7,11 @@ import shlex
 import subprocess
 import time
 
-def process_exists(name):
-    """Check if there's any running process that contains the given name."""
+def process_exists(process_filter):
+    """Check if there's any running process whose name matches the filter."""
     for proc in psutil.process_iter(["name"]):
         try:
-            if proc.info["name"] and name.lower() in proc.info["name"].lower():
+            if bool(re.search(process_filter, proc.info.get("name", ""))):
                 return True
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             pass
@@ -105,7 +105,8 @@ class LlmBackendOllama(LlmBackend, key="Ollama"):
         for model in models.models:
             model_id = model.model
             print(f"Stopping model {model_id}...")
-            subprocess.run(["ollama", "stop", model_id])
+            args = ["ollama", "stop", model_id]
+            subprocess.run(args)
             time.sleep(1)
 
     def is_glances_process(self, process):
@@ -156,6 +157,7 @@ class LlmBackendLlamaSwap(LlmBackend, key="LlamaSwap"):
 
     def stop(self):
         if process_exists(self.process_filter):
+            print("Unloading llama-swap...")
             req = requests.get(f"{self.addr}/unload")
             req.raise_for_status()
 
