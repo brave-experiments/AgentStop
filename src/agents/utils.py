@@ -396,11 +396,18 @@ class CustomWebSearchTool(CustomTool, WebSearchTool):
 
 class CustomApiWebSearchTool(CustomTool, ApiWebSearchTool):
     """Compress each search result individually"""
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, timeout=10, **kwargs):
         super().__init__(*args, compress_final_output=False, **kwargs)
+        self.timeout = timeout
 
     def _forward(self, query):
-        return ApiWebSearchTool.forward(self, query)
+        self._enforce_rate_limit()
+        params = {**self.params, "q": query}
+        response = requests.get(self.endpoint, headers=self.headers, params=params, timeout=self.timeout)
+        response.raise_for_status()
+        data = response.json()
+        results = self.extract_results(data)
+        return self.format_markdown(results)
 
     def extract_results(self, data: dict) -> list:
         results = []

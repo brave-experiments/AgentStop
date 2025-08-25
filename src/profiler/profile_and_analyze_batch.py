@@ -1,5 +1,6 @@
 import argparse
 import pandas as pd
+import time
 import traceback
 
 from pathlib import Path
@@ -37,6 +38,8 @@ sudo python -m profiler.profile_and_analyze_multiple \\
     parser.add_argument("--input_path", type=str, required=True, help="Path to input.")
     parser.add_argument("--question_col", type=str, required=True, help="Column name for the questions in the input file.")
     parser.add_argument("--num_repeats", type=int, default=1, help="Number of repetitions.")
+    parser.add_argument("--timeout", type=int, default=None, help="Timeout (seconds) for target script. Default to no timeout.")
+    parser.add_argument("--num_retries", type=int, default=0, help="Number of retries if profiling fails. Default to 0.")
     parser.add_argument("--base_output_path", type=str, required=True, help="Base path to store output.")
     parser.add_argument("--preload_model_id", type=str, default=None, help="Model id for the profiler.")
     parser.add_argument("--device_type", type=str, required=True, choices=DeviceType.ALL, help="Type of device for analysis.")
@@ -47,7 +50,9 @@ sudo python -m profiler.profile_and_analyze_multiple \\
     problems = df[args.question_col].to_list()
     Path(args.base_output_path).mkdir(parents=True, exist_ok=True)
     num_repeats = args.num_repeats
+    num_retries = args.num_retries
     assert num_repeats > 0
+    assert num_retries >= 0
 
     for run_idx in range(args.num_repeats):
         print(f"** Run {run_idx + 1}/{args.num_repeats} **")
@@ -64,35 +69,42 @@ sudo python -m profiler.profile_and_analyze_multiple \\
             prob = prob.replace('"', '\\"')
             script = args.script_template.format(prompt=f'"{prob}"', agent_trace_path=agent_trace_path)
 
-            try:
-                print(f"\n** Profiling started for script:\n{script}\n")
-                profiler = Profiler(
+            retry_count = 0
+            success = False
+            while not success and retry_count <= num_retries:
+                print(f"\n** [{time.time()}] Profiling started (attempt {retry_count}/{num_retries}) for script:\n{script}\n")
+                success = Profiler(
                     script,
                     ".*python.*",
                     glances_log_path,
                     power_output_path=power_log_path,
                     interval=100,
-                    timeout=3600,
+                    timeout=args.timeout,
                     capture_stdout=True,
                     llm_backend=args.llm_backend,
                     preload_model_id=args.preload_model_id,
-                )
-                profiler.start_profiling()
+                ).start_profiling()
+                if not success:
+                    retry_count += 1
 
-                print(f"\n** Producing analytics... **\n")
-                analyzer = Analyzer(
-                    args.device_type,
-                    glances_log_path,
-                    agent_trace_path,
-                    power_log_path=power_log_path,
-                    model_id=None,
-                    full_execution=False,
-                    output_dir=analysis_output_path,
-                    output_ext=["png", "pdf"],
-                    display_plots=False,
-                    display_summary=False,
-                )
-                analyzer.analyze()
-            except:
-                print(f"Exception occurred for problem {idx}: {prob}")
-                traceback.print_exc()
+            if success:
+                print(f"** [{time.time()}] Profiling finished. **")
+                try:
+                    print(f"\n** Producing analytics... **\n")
+                    Analyzer(
+                        args.device_type,
+                        glances_log_path,
+                        agent_trace_path,
+                        power_log_path=power_log_path,
+                        model_id=None,
+                        full_execution=False,
+                        output_dir=analysis_output_path,
+                        output_ext=["png", "pdf"],
+                        display_plots=False,
+                        display_summary=False,
+                    ).analyze()
+                except Exception as e:
+                    print(f"Analytics encountered an exception: {e}")
+                    traceback.print_exc()
+            else:
+                print(f"** [{time.time()}] Profiling failed. **")

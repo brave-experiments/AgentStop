@@ -504,7 +504,7 @@ Write your short description here:
 
         for word in words:
             test_line = current_line + (" " if current_line else "") + word
-            text_obj = ax.text(0, 0, test_line, fontsize=fontsize)
+            text_obj = ax.text(0, 0, test_line, fontsize=fontsize, parse_math=False, usetex=False)
             text_width = text_obj.get_window_extent(renderer=renderer).width
             text_obj.remove()
 
@@ -571,11 +571,11 @@ Write your short description here:
 
                 # Draw the text if the bar is long enough
                 bar_pixel_width = ax.transData.transform((t_end, 0))[0] - ax.transData.transform((t_start, 0))[0]
-                text_obj = ax.text(0, 0, stage, fontsize=8)
+                text_obj = ax.text(0, 0, stage, fontsize=8, parse_math=False, usetex=False)
                 text_pixel_width = text_obj.get_window_extent(renderer=ax.figure.canvas.get_renderer()).width
                 text_obj.remove()
                 if text_pixel_width <= bar_pixel_width * 1.25:
-                    ax.text((t_start + t_end) / 2, y_pos, stage, ha='center', va='center', fontsize=8)
+                    ax.text((t_start + t_end) / 2, y_pos, stage, ha='center', va='center', fontsize=8, parse_math=False, usetex=False)
 
         # Legend
         legend_handles = [mpatches.Patch(color=color, label=stage) for stage, color in stage_to_color.items()]
@@ -664,22 +664,22 @@ Write your short description here:
                 # Draw stage name inside bar if the bar is long enough
                 bar_center = (t_start + t_end) / 2
                 bar_pixel_width = ax.transData.transform((t_end, 0))[0] - ax.transData.transform((t_start, 0))[0]
-                text_obj = ax.text(0, 0, stage, fontsize=fontsize)
+                text_obj = ax.text(0, 0, stage, fontsize=fontsize, parse_math=False, usetex=False)
                 text_pixel_width = text_obj.get_window_extent(renderer=ax.figure.canvas.get_renderer()).width
                 text_obj.remove()
                 if text_pixel_width <= bar_pixel_width * 1.25:
-                    ax.text(bar_center, y_pos, stage, ha='center', va='center', fontsize=fontsize)
+                    ax.text(bar_center, y_pos, stage, ha='center', va='center', fontsize=fontsize, parse_math=False, usetex=False)
 
                 # Draw extra annotation text outside of bar:
                 if desc is not None and len(desc) > 0:
                     if kind == LLM:
                         text = self.wrap_text_to_axis_width(ax, desc, t_start, t_start + duration, fontsize=6)
-                        ax.text(bar_center, y_pos - bar_height, text, ha="center", va="top", fontsize=6)
+                        ax.text(bar_center, y_pos - bar_height, text, ha="center", va="top", fontsize=6, parse_math=False, usetex=False)
                     elif kind == TOOL:
                         text = desc[:25] + ("..." if len(desc) > 25 else "")
                         y_pos_adjusted = y_pos + bar_height + 0.5 * bar_height * (tool_height_idx % 2) # Alternate
                         tool_height_idx += 1
-                        ax.text(bar_center, y_pos_adjusted, text, ha="center", va="top", fontsize=fontsize)
+                        ax.text(bar_center, y_pos_adjusted, text, ha="center", va="top", fontsize=fontsize, parse_math=False, usetex=False)
 
         # Legend
         legend_handles = [mpatches.Patch(color=color, label=stage) for stage, color in stage_to_color.items()]
@@ -795,6 +795,8 @@ Write your short description here:
                 verticalalignment="top",
                 horizontalalignment="left",
                 fontsize=8,
+                parse_math=False,
+                usetex=False,
             )
 
         plt.tight_layout()

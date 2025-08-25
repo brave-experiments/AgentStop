@@ -56,28 +56,37 @@ class Profiler:
         self.monitoring_thread = None
         self.stop_monitoring = False
 
-    def track_process_tree(self):
+    def track_process(self, start_time=None):
         """Monitor and track all processes created by the target script"""
 
         def monitor_processes():
             while not self.stop_monitoring and self.target_process:
                 try:
-                    if self.target_process.poll() is None:  # Process still running
-                        # Get the main process
-                        main_process = psutil.Process(self.target_process.pid)
-                        self.target_pids.add(self.target_process.pid)
+                    if self.target_process.poll() is not None:  # Process terminated
+                        break
 
-                        # Get all child processes recursively
-                        try:
-                            children = main_process.children(recursive=True)
-                            for child in children:
-                                self.target_pids.add(child.pid)
-                        except psutil.NoSuchProcess:
-                            pass  # Process may have ended
+                    # Get the main process
+                    self.target_pids.add(self.target_process.pid)
+                    main_process = psutil.Process(self.target_process.pid)
+
+                    # Get all child processes recursively
+                    try:
+                        children = main_process.children(recursive=True)
+                        for child in children:
+                            self.target_pids.add(child.pid)
+                    except psutil.NoSuchProcess:
+                        pass  # Process may have ended
 
                     time.sleep(0.1)  # Check every 100ms
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     break
+
+                if self.timeout is not None and start_time is not None:
+                    elapsed_time = (time.time_ns() - start_time) / SEC_TO_NANOSEC
+                    if elapsed_time > self.timeout * 1.1:
+                        print(f"WARNING: Process has exceeded timeout without raising an exception. {elapsed_time}s have elapsed.")
+                        self.stop_process(self.target_process, process_group=True)
+                        break
 
         self.monitoring_thread = threading.Thread(target=monitor_processes, daemon=True)
         self.monitoring_thread.start()
@@ -170,53 +179,60 @@ class Profiler:
                 [s.strip() for s in shlex.split(self.target_script)],
                 stdout=output,
                 stderr=output,
+                start_new_session=True,
             )
 
             # Start tracking the process tree
-            self.track_process_tree()
+            self.stop_monitoring = False
+            self.track_process(start_time=start_time)
 
             # Wait for the script to complete
-            _, stderr = self.target_process.communicate(timeout=self.timeout)
+            return_code = self.target_process.wait(timeout=self.timeout)
             end_time = time.time_ns()
+            duration = round((end_time - start_time) / SEC_TO_NANOSEC)
 
-            print(
-                f"Target script completed in {round((end_time - start_time) / SEC_TO_NANOSEC)}s"
-            )
-            print(
-                f"Tracked {len(self.target_pids)} process IDs: {sorted(list(self.target_pids))}"
-            )
+            print(f"Target script completed in {duration}s")
+            print(f"Tracked {len(self.target_pids)} process IDs: {sorted(list(self.target_pids))}")
 
-            if self.target_process.returncode != 0:
-                print("Target script completed with errors:")
-                print(stderr.decode())
-            else:
-                print("Target script completed successfully")
-
-            return True
-        except subprocess.TimeoutExpired:
-            print("Target script timed out. Terminating...")
-            if self.target_process is not None:
-                self.stop_process(self.target_process)
-            return False
-        except Exception as e:
-            print(f"Error running target script: {e}")
-            return False
+            if return_code < 0:
+                raise Exception(f"Target process exited with status code {return_code}")
+        except BaseException as e:
+            raise e
         finally:
+            if self.target_process is not None:
+                self.stop_process(self.target_process, process_group=True)
+                self.target_process = None
             self.stop_monitoring = True
-            self.target_process = None
+            if self.monitoring_thread is not None:
+                self.monitoring_thread.join()
+                self.monitoring_thread = None
 
-    def stop_process(self, process):
-        process.send_signal(signal.SIGINT)
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
+    def stop_process(self, process, process_group=False, grace_period=5):
+        if process is None or process.poll() is not None:
+            return
+        if process_group:
+            pg_id = os.getpgid(process.pid)
+            print(f"Attempting to terminate process group {pg_id}...")
+            os.killpg(pg_id, signal.SIGTERM)
+            try:
+                process.wait(timeout=grace_period)
+            except subprocess.TimeoutExpired:
+                print(f"Forcefully terminating process group {pg_id}...")
+                os.killpg(pg_id, signal.SIGKILL)
+        else:
+            print(f"Attempting to terminate process {process.pid}")
+            process.send_signal(signal.SIGINT)
+            try:
+                process.wait(timeout=grace_period)
+            except subprocess.TimeoutExpired:
+                print(f"Forcefully terminating process {process.pid}")
+                process.kill()
         time.sleep(2)
 
     def stop_glances(self):
         if self.glances_process is not None:
             print("Stopping glances...")
-            self.stop_process(self.glances_process)
+            self.stop_process(self.glances_process, grace_period=10)
             self.glances_process = None
         print("Glances stopped")
 
