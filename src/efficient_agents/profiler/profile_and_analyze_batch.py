@@ -3,10 +3,10 @@ import pandas as pd
 import time
 import traceback
 
+from efficient_agents.agents.llm_backend import LlmBackend
+from efficient_agents.profiler.profile import Profiler
+from efficient_agents.profiler.analyze import Analyzer, DeviceType
 from pathlib import Path
-from agents.llm_backend import LlmBackend
-from profiler.profile import Profiler
-from profiler.analyze import Analyzer, DeviceType
 
 if __name__ == "__main__":
     example_text = """

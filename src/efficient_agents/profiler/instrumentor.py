@@ -2,7 +2,7 @@
 import json
 import time
 
-from agents.utils import (
+from efficient_agents.agents.utils import (
     agglomerate_litellm_stream_deltas,
     CustomLiteLLMModel,
 )

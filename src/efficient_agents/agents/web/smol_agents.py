@@ -4,16 +4,16 @@ import os
 import time
 import yaml
 
-from agents.llm_backend import LlmBackend
-from agents.utils import (
+from dotenv import load_dotenv
+from efficient_agents.agents.llm_backend import LlmBackend
+from efficient_agents.agents.utils import (
     create_tools,
     get_custom_arg_parser,
     CustomLiteLLMModel,
     NO_THINK,
-    WebAgent,
+    get_json_exporter,
 )
-from dotenv import load_dotenv
-from profiler.instrumentor import CustomSmolagentsInstrumentor
+from efficient_agents.profiler.instrumentor import CustomSmolagentsInstrumentor
 from rich.rule import Rule
 from rich.text import Text
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
@@ -80,6 +80,39 @@ def create_model(
     else:
         raise NotImplementedError(f"{model_type} is not supported.")
 
+class WebAgent:
+    def __init__(
+        self,
+        name,
+        model_id: str,
+        model_type,
+        *args,
+        stream_llm=False,
+        **kwargs
+    ):
+        self.name = name
+        self.model_id = model_id
+        self.model_type = model_type
+        self.stream_llm = stream_llm
+        self.instrumentor = None
+        self.agent = None
+        self.args = args
+        self.kwargs = kwargs
+
+    def get_instrumentor(self):
+        raise NotImplementedError("You need to implement this method.")
+
+    def enable_tracing(self, output_path):
+        self.get_instrumentor().instrument(
+            tracer_provider=get_json_exporter(self.name, output_path)
+        )
+
+    def disable_tracing(self):
+        self.get_instrumentor().uninstrument()
+
+    def run(self, *args, **kwargs):
+        raise NotImplementedError("You need to implement this method.")
+
 class BasicSmolAgent(WebAgent):
     subclasses = {}
 
@@ -98,7 +131,7 @@ class BasicSmolAgent(WebAgent):
     
     def __init__(
         self,
-        model_id,
+        model_id: str,
         model_type="litellm",
         stream_llm=False,
         stream_run=False,
@@ -123,7 +156,7 @@ class BasicSmolAgent(WebAgent):
 
         self.should_add_no_think = (
             self.model_type == "litellm" and
-            "qwen3" in self.model_id.lower() and
+            t and
             "instruct" not in self.model_id.lower() and
             not self.thinking
         )
@@ -368,7 +401,7 @@ class LogProbsCascadeAgent(BasicCascadeAgent, key="logprobs_cascade"):
     '''
     def __init__(self, *args, logprobs_threshold=None, **kwargs):
         assert isinstance(logprobs_threshold, float)
-        super().__init__(*args, logprobs=True, top_logprobs=0, **kwargs)
+        super().__init__(*args, logprobs=True, top_logprobs=5, **kwargs)
         self.logprobs_threshold = logprobs_threshold
     
     def should_cascade(self, step):

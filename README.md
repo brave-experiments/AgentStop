@@ -6,6 +6,10 @@ This repo contains measurement tools for profiling agent's system performance.
 
 #### Ollama
 
+#### Llama.cpp
+
+Use llama-swap.
+
 #### Environment
 
 Make sure to create and activate a virtual environment (we recommend `conda`).

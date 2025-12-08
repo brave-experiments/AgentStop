@@ -16,8 +16,8 @@ Output a short answer in this format:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Evaluate LLMs on SimpleQA using Ollama",
-        epilog="Example: python eval_llm_simpleqa.py --model_id qwen3:4b qwen3:8b qwen3:32b",
+        description="Evaluate LLMs on SimpleQA or FRAMES using Ollama",
+        epilog="Example: python eval_llm_qa.py --model_id qwen3:4b qwen3:8b qwen3:32b",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--model_id", type=str, nargs="+", required=True, help="Ollama model ID")

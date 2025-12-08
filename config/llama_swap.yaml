@@ -11,7 +11,7 @@ startPort: 10001
 
 # macros: sets a dictionary of string:string pairs
 macros:
-  "ollama_for_llamacpp_path": /Users/USERNAME/llama.cpp/models # Please update this
+  "ollama_for_llamacpp_path": /Users/minoskt/llama.cpp/models # Please update this
   "latest-llama": >
     llama-server --port ${PORT} --ctx-size 40960 --batch-size 512 --n-gpu-layers -1 --threads 8 --flash-attn
   "latest-mlx": >
@@ -21,12 +21,20 @@ macros:
 
 models:
   # keys are the model names used in API requests
+  "llamacpp/qwen3-0.6b":
+    cmd: ${latest-llama} --model ${ollama_for_llamacpp_path}/qwen3-0.6.gguf
   "llamacpp/qwen3-1.7b":
     cmd: ${latest-llama} --model ${ollama_for_llamacpp_path}/qwen3-1.7b.gguf
+  "llamacpp/qwen3-4b":
+    cmd: ${latest-llama} --model ${ollama_for_llamacpp_path}/qwen3-4b-instruct-2507-q4_K_M.gguf
+  "llamacpp/qwen3-8b":
+    cmd: ${latest-llama} --model ${ollama_for_llamacpp_path}/qwen3-18.gguf
   "llamacpp/qwen3-14b":
     cmd: ${latest-llama} --model ${ollama_for_llamacpp_path}/qwen3-14b.gguf
   "llamacpp/qwen3-30b":
     cmd: ${latest-llama} --model ${ollama_for_llamacpp_path}/qwen3-30b-a3b-instruct-2507-q4_K_M.gguf
+  "llamacpp/qwen3-32b":
+    cmd: ${latest-llama} --model ${ollama_for_llamacpp_path}/qwen3-32b.gguf
   "mlx/qwen3-1.7b":
     cmd: ${latest-mlx} --model mlx-community/Qwen3-1.7B-4bit
   "mlc/qwen3-1.7b":

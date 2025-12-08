@@ -84,39 +84,6 @@ class JsonSpanExporter(InMemorySpanExporter):
         with path.open("w", encoding="utf-8") as f:
             json.dump(spans, f, indent=2, default=str)
 
-
-class WebAgent:
-    def __init__(
-        self,
-        name,
-        model_id,
-        model_type,
-        *args,
-        stream_llm=False,
-        **kwargs
-    ):
-        self.name = name
-        self.model_id = model_id
-        self.model_type = model_type
-        self.stream_llm = stream_llm
-        self.instrumentor = None
-        self.args = args
-        self.kwargs = kwargs
-
-    def get_instrumentor(self):
-        raise NotImplementedError("You need to implement this method.")
-
-    def enable_tracing(self, output_path):
-        self.get_instrumentor().instrument(
-            tracer_provider=get_json_exporter(self.name, output_path)
-        )
-
-    def disable_tracing(self):
-        self.get_instrumentor().uninstrument()
-
-    def run(self, *args, **kwargs):
-        raise NotImplementedError("You need to implement this method.")
-
 @dataclass
 class CustomChatMessageStreamDelta(ChatMessageStreamDelta):
     logprobs: Any | None = None

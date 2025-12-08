@@ -16,8 +16,9 @@ import threading
 import tempfile
 import time
 import traceback
-from agents.llm_backend import LlmBackend
+
 from datetime import timezone
+from efficient_agents.agents.llm_backend import LlmBackend
 from pathlib import Path
 
 SEC_TO_NANOSEC = 1_000_000_000
