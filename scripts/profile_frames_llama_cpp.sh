@@ -9,8 +9,8 @@ mkdir -p ${BASE_OUTPUT_PATH}
 
 sudo echo "Starting profiling"
 sudo nohup python -u -m efficient_agents.profiler.profile_and_analyze_batch \
---script_template "python -m efficient_agents.agents.web.smol_agents \
-    --agent_type logprobs_cascade \
+--script_template "python -m efficient_agents.agents.run \
+    --agent_type web_logprobs \
     --model_id openai/${MODEL_ID} openai/${MODEL2_ID} \
     --model_type litellm \
     --api_base http://127.0.0.1:8080/v1 \

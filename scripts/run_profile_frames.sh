@@ -9,8 +9,8 @@ BASE_OUTPUT_PATH=../logs/frames_ollama_qwen3_${MODEL_SIZE}b
 mkdir -p ${BASE_OUTPUT_PATH}
 sudo echo "Starting profiling"
 sudo nohup python -u -m efficient_agents.profiler.profile_and_analyze_batch \
---script_template "python -m efficient_agents.agents.web.smol_agents \
-    --agent_type code \
+--script_template "python -m efficient_agents.agents.run \
+    --agent_type web_basic \
     --model_id ollama_chat/qwen3:${MODEL_SIZE}b \
     --model_type litellm \
     --prompt {prompt} \
@@ -29,8 +29,8 @@ sudo nohup python -u -m efficient_agents.profiler.profile_and_analyze_batch \
 --device_type apple_laptop \
 > ${BASE_OUTPUT_PATH}/profile.log 2>&1 &
 # sudo nohup python -u -m efficient_agents.profiler.profile_and_analyze_batch \
-# --script_template "python -m efficient_agents.agents.web.smol_agents \
-#     --agent_type fixed_cascade_compress \
+# --script_template "python -m efficient_agents.agents.run \
+#     --agent_type web_basic \
 #     --fixed_cascade_step 2 \
 #     --model_id ollama_chat/qwen3:1.7b ollama_chat/qwen3:30b-a3b-instruct-2507-q4_K_M \
 #     --model_type litellm \

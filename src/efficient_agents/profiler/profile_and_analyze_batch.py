@@ -13,7 +13,7 @@ if __name__ == "__main__":
 Examples:
 
 sudo python -m profiler.profile_and_analyze_multiple \\
---script_template "python -m agents.web.smol_agents \\
+--script_template "python -m efficient_agents.agents.web \\
     --agent_type fixed_cascade_compress \\
     --model_id ollama_chat/qwen3:1.7b ollama_chat/qwen3:14b \\
     --model_type litellm \\

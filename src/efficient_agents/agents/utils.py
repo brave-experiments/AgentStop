@@ -21,6 +21,7 @@ from pathlib import Path
 from requests.exceptions import RequestException
 from smolagents import (
     ApiWebSearchTool,
+    MLXModel,
     Tool,
     VisitWebpageTool,
     WebSearchTool,
@@ -203,7 +204,7 @@ class CustomLiteLLMModel(LiteLLMModel):
     
     def generate_stream(
         self,
-        messages: list[ChatMessage | dict],
+        messages: list[ChatMessage],
         stop_sequences: list[str] | None = None,
         response_format: dict[str, str] | None = None,
         tools_to_call_from: list[Tool] | None = None,
@@ -489,27 +490,58 @@ class CustomVisitWebpageTool(CustomTool, VisitWebpageTool):
         except Exception as e:
             return f"An unexpected error occurred: {str(e)}"
 
-def create_tools(add_no_think, compression_ratio):
-    return [
-        CustomApiWebSearchTool(
-            compression_ratio=compression_ratio,
-            add_no_think=add_no_think,
-        ),
-        CustomWikipediaSearchTool(
-            user_agent="MyWebAgent (dpham@brave.com)",
-            language="en",
-            content_type="text",
-            extract_format="WIKI",
-            compression_ratio=compression_ratio,
-            add_no_think=add_no_think,
-            max_output_length=10000,
-        ),
-        CustomVisitWebpageTool(
-            compression_ratio=compression_ratio,
-            add_no_think=add_no_think,
-            max_output_length=10000,
-        ),
-    ]
+def create_model(
+        model_id,
+        model_type="litellm",
+        api_key=None,
+        api_base=None,
+        context_size=40960, # Ollama Qwen 3's context length limit
+        max_tokens=512, # Max number of tokens to generate per LLM call
+        thinking=False,
+        temperature=0.0,
+        top_p=1.0,
+        top_k=20,
+        min_p=0.0,
+        logprobs=False,
+        top_logprobs=0,
+        **kwargs,
+    ):
+    if model_type == "mlx": # MLX is customized for Apple silicon
+        from mlx_lm.sample_utils import make_sampler
+        sampler = make_sampler(temp=temperature, top_p=top_p, min_p=min_p, top_k=top_k)
+        return MLXModel(
+            model_id=model_id,
+            trust_remote_code=True,
+            max_tokens=max_tokens,
+            apply_chat_template_kwargs={
+                "enable_thinking": thinking,
+            },
+            sampler=sampler,
+        )
+    elif model_type == "litellm":
+        import litellm
+        litellm.drop_params=True # To ensure any unsupported params would be dropped
+        args = {
+            "model_id": model_id,
+            "api_key": api_key,
+            "api_base": api_base,
+            "max_tokens": max_tokens,
+            "num_ctx": context_size,
+            "temperature": temperature,
+            "top_p": top_p,
+            "top_k": top_k,
+            "min_p": min_p,
+            "logprobs": logprobs,
+            "timeout": 300, # Should be big enough to accomodate large models
+            "seed": 47,
+            "flatten_messages_as_text": True,
+        }
+        if logprobs:
+            args["top_logprobs"] = top_logprobs
+        return CustomLiteLLMModel(**args)
+    else:
+        raise NotImplementedError(f"{model_type} is not supported.")
+
 
 def get_json_exporter(service_name, output_file):
     resource = Resource.create({"service.name": service_name})
@@ -518,23 +550,3 @@ def get_json_exporter(service_name, output_file):
     tracer_provider = TracerProvider(resource=resource)
     tracer_provider.add_span_processor(span_processor)
     return tracer_provider
-
-
-def get_custom_arg_parser(description, example_text):
-    parser = argparse.ArgumentParser(
-        description=description,
-        epilog=example_text,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("--model_id", type=str, nargs="+", required=True, help="Model ID(s) to use.")
-    parser.add_argument("--model_type", type=str, required=True, help="Type of the model backend.")
-    parser.add_argument("--prompt", type=str, required=True, help="Prompt to give to the agent.")
-    parser.add_argument("--stream", action=argparse.BooleanOptionalAction, default=False, help="Enable LLM streaming.")
-    parser.add_argument("--thinking", action=argparse.BooleanOptionalAction, default=False, help="Enable thinking.")
-    parser.add_argument("--trace_path", type=str, default=None, help="Path to save the JSON trace.")
-    parser.add_argument("--api_key_env", type=str, default=None, help="Optional .env's field for the model API key.")
-    parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
-    parser.add_argument("--top_p", type=float, default=1.0, help="Sampling top_p")
-    parser.add_argument("--top_k", type=int, default=20, help="Sampling top_k")
-    parser.add_argument("--min_p", type=float, default=0.0, help="Sampling min_p")
-    return parser

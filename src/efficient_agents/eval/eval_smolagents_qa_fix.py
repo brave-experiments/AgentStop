@@ -5,10 +5,8 @@ import subprocess
 import time
 import traceback
 
-from efficient_agents.agents.web.smol_agents import (
+from efficient_agents.agents.domains import (
     WebCodeAgent,
-    WebManagedAgent,
-    WebToolCallingAgent,
 )
 from smolagents.agent_types import AgentText
 

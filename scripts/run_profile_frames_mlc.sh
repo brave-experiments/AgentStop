@@ -6,8 +6,8 @@ sudo echo "Starting profiling"
 # mkdir -p ../logs/frames_ollama_qwen3_${MODEL_SIZE}b
 # sudo echo "Starting profiling"
 # sudo nohup python -u -m efficient_agents.profiler.profile_and_analyze_batch \
-# --script_template "python -m efficient_agents.agents.web.smol_agents \
-#     --agent_type code \
+# --script_template "python -m efficient_agents.agents.run.smol_agents \
+#     --agent_type web_basic \
 #     --model_id ollama_chat/qwen3:${MODEL_SIZE}b \
 #     --model_type litellm \
 #     --prompt {prompt} \
@@ -24,9 +24,9 @@ sudo echo "Starting profiling"
 # --preload_model_id ollama_chat/qwen3:${MODEL_SIZE}b \
 # --device_type apple_laptop \
 # > ../logs/frames_ollama_qwen3_${MODEL_SIZE}b/profile.log 2>&1 &
-sudo nohup python -u -m pefficient_agents.rofiler.profile_and_analyze_batch \
---script_template "python -m efficient_agents.agents.web.smol_agents \
-    --agent_type mean_log_probs \
+sudo nohup python -u -m efficient_agents.profiler.profile_and_analyze_batch \
+--script_template "python -m efficient_agents.agents.run \
+    --agent_type web_logprobs \
     --model_id openai/mlc-ai/Qwen3-${MODEL_SIZE}B-q4f16_1-MLC openai/mlc-ai/Qwen3-${MODEL2_SIZE}B-q4f16_1-MLC \
     --model_type litellm \
     --api_base http://127.0.0.1:8080/v1 \
