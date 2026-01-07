@@ -46,6 +46,8 @@ class Profiler:
 
         if llm_backend is not None:
             self.llm_backend = LlmBackend.create(llm_backend)
+        else:
+            self.llm_backend = None
         self.preload_model_id = preload_model_id
 
         self.glances_process = None
@@ -98,8 +100,9 @@ class Profiler:
             self.glances_tmp_file = tmp.name
         plugins = "cpu,gpu,mem,memswap,sensors,network,diskio,processlist"
         with open(self.glances_tmp_file, "w") as f:
-            backend_filter = self.llm_backend.process_filter
-            backend_filter = f"|.*{backend_filter}.*" if backend_filter is not None else ""
+            backend_filter = ""
+            if self.llm_backend is not None and self.llm_backend.process_filter is not None:
+                backend_filter = f"|.*{self.llm_backend.process_filter}.*"
             self.glances_process = subprocess.Popen(
                 [
                     "glances",

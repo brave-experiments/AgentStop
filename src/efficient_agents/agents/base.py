@@ -22,11 +22,10 @@ from smolagents.monitoring import LogLevel, Timing
 
 
 class BaseAgent:
+    subclasses = {}
+
     def __init_subclass__(cls, key=None, **kwargs):
         super().__init_subclass__(**kwargs)
-        if not hasattr(cls, "subclasses"):
-            cls.subclasses = {}
-
         reg_key = key or cls.__name__
         if reg_key in cls.subclasses:
             raise ValueError(f"Duplicate key '{reg_key}' registered")
@@ -152,8 +151,6 @@ class BaseAgent:
         )
 
     def run(self, prompt, **kwargs):
-        if self.agent is None:
-            raise Exception("Agent is not initialized")
         return self.agent.run(prompt, **kwargs)
 
 

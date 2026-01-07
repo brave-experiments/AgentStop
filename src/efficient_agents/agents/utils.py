@@ -1,4 +1,3 @@
-import argparse
 import json
 import pandas as pd
 import pymupdf
@@ -538,6 +537,16 @@ def create_model(
         }
         if logprobs:
             args["top_logprobs"] = top_logprobs
+        del_keys = []
+        for k, v in args.items():
+            if v is None:
+                del_keys.append(k)
+        for k in del_keys:
+            del args[k]
+        if model_id.startswith("claude"):
+            del args["num_ctx"]
+            del args["top_p"] # 4.5 only allows either temperature or top_p, which we don't prefer.
+            del args["min_p"]
         return CustomLiteLLMModel(**args)
     else:
         raise NotImplementedError(f"{model_type} is not supported.")
