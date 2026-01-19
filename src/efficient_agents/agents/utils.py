@@ -543,10 +543,15 @@ def create_model(
                 del_keys.append(k)
         for k in del_keys:
             del args[k]
-        if model_id.startswith("claude"):
+        if model_id.startswith("claude") or model_id.startswith("gpt"):
             del args["num_ctx"]
-            del args["top_p"] # 4.5 only allows either temperature or top_p, which we don't prefer.
+            del args["top_p"]
             del args["min_p"]
+            del args["top_k"]
+        if model_id.startswith("gpt-5"):
+            args["max_completion_tokens"] = args["max_tokens"]
+            del args["max_tokens"]
+
         return CustomLiteLLMModel(**args)
     else:
         raise NotImplementedError(f"{model_type} is not supported.")
