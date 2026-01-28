@@ -4,7 +4,7 @@
         "bootstrap": "^5.3.3",
         "favico.js": "^0.3.10",
         "hotkeys-js": "^3.10.2",
-        "lodash": "^4.17.21",
+        "lodash": "^4.17.23",
         "sanitize-html": "^2.10.0",
         "vue": "^3.3.2"
     },
