@@ -92,6 +92,7 @@ class Analyzer:
         output_ext=["png"],
         display_plots=False,
         display_summary=False,
+        include_extra_info=True,
     ):
         assert device_type in [DeviceType.APPLE_LAPTOP, DeviceType.JETSON]
         self.device_type = device_type
@@ -118,6 +119,7 @@ class Analyzer:
         self.agent_output = None
         self.display_plots = display_plots
         self.display_summary = display_summary
+        self.include_extra_info = include_extra_info
 
     def process_glances_log(self):
         data = [{
@@ -448,7 +450,7 @@ Write your short description here:
                 "start_time": (t["start_time"] - start_time) / SEC_TO_NANOSEC,
                 "end_time": (t["end_time"] - start_time) / SEC_TO_NANOSEC,
                 "kind": kind,
-                "desc": desc.strip() if desc is not None else "",
+                "desc": desc.strip() if desc is not None and self.include_extra_info else "",
                 "extra_data": extra_data,
             }
             processed.append(span)
@@ -778,7 +780,7 @@ Write your short description here:
         ax_stage.set_xlabel("Time Elapsed (sec)")
 
         # Draw input and output boxes
-        if isinstance(self.agent_task, str):
+        if self.include_extra_info and isinstance(self.agent_task, str):
             x_start, x_end = ax.get_xlim()
             x_end = x_start + 0.25 * (x_end - x_start)
             task_text = self.wrap_text_to_axis_width(ax, f"Task: {self.agent_task}", x_start, x_end, fontsize=8)

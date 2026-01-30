@@ -17,7 +17,8 @@ def get_custom_arg_parser(description, example_text):
     )
     parser.add_argument("--model_id", type=str, nargs="+", required=True, help="Model ID(s) to use.")
     parser.add_argument("--model_type", type=str, required=True, help="Type of the model backend.")
-    parser.add_argument("--prompt", type=str, required=True, help="Prompt to give to the agent.")
+    parser.add_argument("--prompt", type=str, default=None, help="Prompt to give to the agent. Either prompt or prompt_path must be specified.")
+    parser.add_argument("--prompt_path", type=str, default=None, help="Path to the prompt to give to the agent. Either prompt or prompt_path must be specified.")
     parser.add_argument("--stream", action=argparse.BooleanOptionalAction, default=False, help="Enable LLM streaming.")
     parser.add_argument("--thinking", action=argparse.BooleanOptionalAction, default=False, help="Enable thinking.")
     parser.add_argument("--trace_path", type=str, default=None, help="Path to save the JSON trace.")
@@ -26,6 +27,26 @@ def get_custom_arg_parser(description, example_text):
     parser.add_argument("--top_p", type=float, default=1.0, help="Sampling top_p")
     parser.add_argument("--top_k", type=int, default=20, help="Sampling top_k")
     parser.add_argument("--min_p", type=float, default=0.0, help="Sampling min_p")
+    parser.add_argument(
+        "--agent_type",
+        type=str,
+        required=True,
+        choices=list(BaseAgent.subclasses.keys()),
+        help=f"Type of agent.",
+    )
+    parser.add_argument("--planning_interval", type=int, default=None, help="Planning interval.")
+    parser.add_argument("--max_steps", type=int, default=10, help="Maximum number of steps for the agent.")
+    parser.add_argument("--fixed_cascade_step", type=int, default=None, help="Fixed step number to cascade if using fixed cascade agent.")
+    parser.add_argument("--logprobs_threshold", type=float, default=None, help="Logprobs threshold to cascade if using logprobs-based cascade agent.")
+    parser.add_argument("--api_base", type=str, default=None, help="API base for LiteLLM.")
+    parser.add_argument("--llm_backend", type=str, choices=LlmBackend.subclasses.keys(), default=None, help="LLM backend that will be used. This is only needed for cascading.")
+    parser.add_argument(
+        "--compression_ratio",
+        type=float,
+        default=1.0,
+        help="Compression ratio for all results."
+    )
+    parser.add_argument("--docker_id", type=str, default=None, help="Docker instance ID")
     return parser
 
 if __name__ == "__main__":
@@ -74,25 +95,6 @@ python -m efficient_agents.agents.run \\
 """
 
     parser = get_custom_arg_parser(description="Run an agent with tracing enabled.", example_text=example_text)
-    parser.add_argument(
-        "--agent_type",
-        type=str,
-        required=True,
-        choices=list(BaseAgent.subclasses.keys()),
-        help=f"Type of agent.",
-    )
-    parser.add_argument("--planning_interval", type=int, default=None, help="Planning interval.")
-    parser.add_argument("--max_steps", type=int, default=10, help="Maximum number of steps for the agent.")
-    parser.add_argument("--fixed_cascade_step", type=int, default=None, help="Fixed step number to cascade if using fixed cascade agent.")
-    parser.add_argument("--logprobs_threshold", type=float, default=None, help="Logprobs threshold to cascade if using logprobs-based cascade agent.")
-    parser.add_argument("--api_base", type=str, default=None, help="API base for LiteLLM.")
-    parser.add_argument("--llm_backend", type=str, choices=LlmBackend.subclasses.keys(), default=None, help="LLM backend that will be used. This is only needed for cascading.")
-    parser.add_argument(
-        "--compression_ratio",
-        type=float,
-        default=1.0,
-        help="Compression ratio for all results."
-    )
     args = parser.parse_args()
 
     agent = BaseAgent.create(
@@ -113,7 +115,17 @@ python -m efficient_agents.agents.run \\
         cascade_step=args.fixed_cascade_step,
         logprobs_threshold=args.logprobs_threshold,
         llm_backend=args.llm_backend,
+        docker_id=args.docker_id,
     )
     if args.trace_path is not None:
         agent.enable_tracing(args.trace_path)
-    agent.run(args.prompt, max_steps=args.max_steps)
+
+    prompt = args.prompt
+    if prompt is None:
+        assert args.prompt_path is not None
+        try:
+            with open(args.prompt_path, "r") as fp:
+                prompt = fp.read()
+        except:
+            raise Exception(f"Cannot read prompt at {args.prompt_path}")
+    agent.run(prompt, max_steps=args.max_steps)

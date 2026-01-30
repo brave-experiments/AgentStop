@@ -13,7 +13,9 @@ startPort: 10001
 macros:
   "ollama_for_llamacpp_path": /Users/minoskt/llama.cpp/models # Please update this
   "latest-llama": >
-    llama-server --port ${PORT} --ctx-size 40960 --batch-size 512 --n-gpu-layers -1 --threads 8 --flash-attn
+    llama-server --port ${PORT} --ctx-size 40960 --batch-size 512 --n-gpu-layers -1 --threads 8 --flash-attn on
+  "latest-llama-80k": >
+    llama-server --port ${PORT} --ctx-size 81920 --batch-size 512 --n-gpu-layers -1 --threads 8 --flash-attn on
   "latest-mlx": >
     mlx_lm.server --port ${PORT}
   "latest-mlc": >
@@ -35,6 +37,10 @@ models:
     cmd: ${latest-llama} --model ${ollama_for_llamacpp_path}/qwen3-30b-a3b-instruct-2507-q4_K_M.gguf
   "llamacpp/qwen3-32b":
     cmd: ${latest-llama} --model ${ollama_for_llamacpp_path}/qwen3-32b.gguf
+  "llamacpp/qwen3-coder-30b":
+    cmd: ${latest-llama-80k} --model ${ollama_for_llamacpp_path}/qwen3-coder-30b.gguf
+  "llamacpp/devstral-small-2":
+    cmd: ${latest-llama-80k} --model ${ollama_for_llamacpp_path}/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf --jinja
   "mlx/qwen3-1.7b":
     cmd: ${latest-mlx} --model mlx-community/Qwen3-1.7B-4bit
   "mlc/qwen3-1.7b":
