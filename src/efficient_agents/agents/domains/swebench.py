@@ -25,6 +25,12 @@ The output of the command was:
 Please try another command and make sure to avoid those requiring interactive input.
 """
 
+full_output_template = """<returncode>{{output.returncode}}</returncode>
+<output>
+{{ output.output -}}
+</output>
+"""
+
 # Run bash commands in Docker environment
 # Based on https://github.com/SWE-agent/mini-swe-agent/blob/main/src/minisweagent/environments/docker.py
 class BashExecutor(PythonExecutor):
@@ -36,6 +42,7 @@ class BashExecutor(PythonExecutor):
         self.env = config["environment"]["env"]
         self.timeout_template = Template(timeout_template)
         self.output_template = Template(config["agent"]["action_observation_template"])
+        self.full_output_template = Template(full_output_template)
 
     def __call__(self, code: str) -> CodeOutput:
         cmd = ["docker", "exec", "-i"]
@@ -54,8 +61,13 @@ class BashExecutor(PythonExecutor):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
             )
-            output = self.output_template.render(output={"returncode": result.returncode, "output": result.stdout})
-            return CodeOutput(output=output, logs=output, is_final_answer=self.is_finished(result.stdout))
+            is_finished = self.is_finished(result.stdout)
+            output_obj = {"returncode": result.returncode, "output": result.stdout}
+            if not is_finished:
+                output = self.output_template.render(output=output_obj)
+            else:
+                output = self.full_output_template.render(output=output_obj)
+            return CodeOutput(output=output, logs=output, is_final_answer=is_finished)
         except subprocess.TimeoutExpired as e:
             output = ""
             if e.stdout:

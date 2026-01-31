@@ -335,11 +335,12 @@ Write your short description here:
                         pass
                 
                 agent_output = attributes.get(OUTPUT_VALUE, None)
-                if agent_output is not None:
-                    pattern = r"output=('[^']*'|\"[^\"]*\"|\[[^\]]*\]|\{[^}]*\}|\([^)]*\)|[^,)]+)"
-                    match = re.search(pattern, agent_output)
-                    if match:
-                        agent_output = match.group(1)
+                start_pattern = "FinalAnswerStep(output='"
+                if (
+                    isinstance(agent_output, str) and
+                    agent_output.startswith(start_pattern)
+                ):
+                    agent_output = agent_output[len(start_pattern):-2]  # Exclude the closing ')
                 
                 self.agent_task = agent_task
                 self.agent_output = agent_output
