@@ -115,7 +115,7 @@ class LlmBackendOllama(LlmBackend, key="Ollama"):
 
 
 class LlmBackendLlamaSwap(LlmBackend, key="LlamaSwap"):
-    def __init__(self, process_filter=r"llama-swap"):
+    def __init__(self, process_filter=r"(llama-swap|llama-server)"):
         super().__init__(process_filter=process_filter)
         self.addr = "http://127.0.0.1:8080"
 

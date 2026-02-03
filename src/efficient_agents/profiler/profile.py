@@ -6,6 +6,7 @@ System performance profiling using glances.
 import argparse
 import json
 import os
+import pandas as pd
 import platform
 import plistlib
 import psutil
@@ -17,7 +18,7 @@ import tempfile
 import time
 import traceback
 
-from datetime import timezone
+from datetime import datetime, timezone
 from efficient_agents.agents.llm_backend import LlmBackend
 from pathlib import Path
 
@@ -127,8 +128,11 @@ class Profiler:
         os_name = platform.system()
         if os_name == "Darwin":
             self.start_powermetrics()
-        elif os_name == "Linux" and "tegra" in platform.release():
-            self.start_tegrastats()
+        elif os_name == "Linux":
+            if "tegra" in platform.release():
+                self.start_tegrastats()
+            else:
+                self.start_nvidia_smi() 
         else:
             raise NotImplementedError("Power measurement is not supported on your device.")
 
@@ -170,6 +174,27 @@ class Profiler:
         time.sleep(3)
         print(
             f"Started tegrastats logging to {self.power_output_path} (PID = {self.power_process.pid})"
+        )
+
+    def start_nvidia_smi(self):
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            self.power_tmp_file = tmp.name
+        
+        args = [
+            "nvidia-smi",
+            "--query-gpu", "timestamp,power.draw.instant,temperature.gpu,memory.used,utilization.gpu",
+            "--format", "csv,nounits",
+            "-lms", "100",
+            "--filename", self.power_tmp_file,
+        ]
+        self.power_process = subprocess.Popen(
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(3)
+        print(
+            f"Started nvidia-smi logging to {self.power_tmp_file} (PID = {self.power_process.pid})"
         )
 
     def start_target_script(self):
@@ -296,7 +321,7 @@ class Profiler:
             self.save_powermetrics()
         elif os_name == "Linux":
             if "tegra" not in platform.release():
-                raise NotImplementedError("Power measurement on Linux is currently only supported for Nvidia Jetson.")
+                self.save_nvidia_smi()
         else:
             raise NotImplementedError("Power measurement is not supported on your device.")
 
@@ -312,6 +337,26 @@ class Profiler:
             log["timestamp"] = int(fixed_ts * SEC_TO_NANOSEC)
         self.save_jsonl(logs, self.power_output_path)
         print(f"Powermetrics log saved")
+
+    def save_nvidia_smi(self):
+        assert self.power_tmp_file is not None
+        data = pd.read_csv(self.power_tmp_file)
+        logs = []
+        for _, row in data.iterrows():
+            # Convert datetime object to Unix (ns) for JSON
+            # Need to set timezone to UTC manually
+            dt = datetime.strptime(row["timestamp"], "%Y/%m/%d %H:%M:%S.%f")
+            dt = dt.replace(tzinfo=timezone.utc).timestamp()
+            ts = int(dt * SEC_TO_NANOSEC)
+            logs.append({
+                "timestamp": ts,
+                "power": row[" power.draw.instant [W]"] * 1000,
+                "temperature": row[" temperature.gpu"],
+                "memory": row[" memory.used [MiB]"],
+                "utilization": row[" utilization.gpu [%]"],
+            })
+        self.save_jsonl(logs, self.power_output_path)
+        print(f"Nvidia-smi log saved")
 
     def cleanup(self):
         print("Cleaning up...")

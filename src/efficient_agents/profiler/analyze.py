@@ -3,16 +3,13 @@ Analyze glances log and agent's trace.
 """
 
 import argparse
-import os
 import json
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
 import ollama
 import pandas as pd
-import re
 import seaborn as sns
-import sys
 
 from openinference.semconv.trace import (
     OpenInferenceSpanKindValues,
@@ -23,8 +20,8 @@ from collections import deque
 from pathlib import Path
 
 SEC_TO_NANOSEC = 1_000_000_000
-GB_TO_BYTE = 1024 * 1024 * 1024
-KB_TO_BYTE = 1024
+GB_TO_BYTE = 1024 * 1024 * 1024 # This is actually GiB
+KB_TO_BYTE = 1024 # This is actually KiB
 
 SPAN_KIND = SpanAttributes.OPENINFERENCE_SPAN_KIND
 AGENT = OpenInferenceSpanKindValues.AGENT.value
@@ -77,7 +74,8 @@ def energy(ts, power_data, ts_is_elapsed=False):
 class DeviceType:
     APPLE_LAPTOP = "apple_laptop"
     JETSON = "jetson"
-    ALL = [APPLE_LAPTOP, JETSON]
+    LINUX_VM = "linux_vm"
+    ALL = [APPLE_LAPTOP, JETSON, LINUX_VM]
 
 class Analyzer:
     def __init__(
@@ -94,7 +92,7 @@ class Analyzer:
         display_summary=False,
         include_extra_info=True,
     ):
-        assert device_type in [DeviceType.APPLE_LAPTOP, DeviceType.JETSON]
+        assert device_type in DeviceType.ALL
         self.device_type = device_type
         with Path(glances_log_path).open("r", encoding="utf-8") as f:
             self.glances_log = [json.loads(l) for l in f if l.strip()]
@@ -147,7 +145,7 @@ class Analyzer:
             "network_sent_all": sum(itf["bytes_sent"] for itf in l["network"]) / KB_TO_BYTE,
             "network_recv_all": sum(itf["bytes_recv"] for itf in l["network"]) / KB_TO_BYTE,
         } for l in self.glances_log]
-        df = pd.DataFrame.from_dict(data)
+        df = pd.DataFrame(data)
 
         start_time = df["timestamp"].iloc[0]
         df["timestamp_plot"] = (df["timestamp"] - start_time) / SEC_TO_NANOSEC
@@ -171,6 +169,8 @@ class Analyzer:
             self.process_powermetrics_log()
         elif self.device_type == DeviceType.JETSON:
             self.process_tegrastats_log()
+        elif self.device_type == DeviceType.LINUX_VM:
+            self.process_nvidia_smi_log()
 
     def process_powermetrics_log(self):
         glances_start_time = self.glances_df["timestamp"].iloc[0]
@@ -187,7 +187,7 @@ class Analyzer:
             } for l in self.power_log
             if glances_start_time <= l["timestamp"] <= glances_end_time
         ]
-        df = pd.DataFrame.from_dict(data)
+        df = pd.DataFrame(data)
 
         # Need to better approximate timestamps since the precision from powermetrics is 1 sec
         glances_start_time = self.glances_df["timestamp"].iloc[0]
@@ -232,8 +232,6 @@ class Analyzer:
     def process_tegrastats_log(self):
         glances_start_time = self.glances_df["timestamp"].iloc[0]
         glances_end_time = self.glances_df["timestamp"].iloc[-1]
-        
-        sample = self.power_log[0]
 
         data = []
         for l in self.power_log:
@@ -257,7 +255,34 @@ class Analyzer:
             
             data.append(d)
 
-        df = pd.DataFrame.from_dict(data)
+        df = pd.DataFrame(data)
+        df["timestamp_plot"] = (df["timestamp"] - glances_start_time) / SEC_TO_NANOSEC
+        self.power_df = df
+
+    def process_nvidia_smi_log(self):
+        glances_start_time = self.glances_df["timestamp"].iloc[0]
+        glances_end_time = self.glances_df["timestamp"].iloc[-1]
+
+        data = []
+        for l in self.power_log:
+            ts = l["timestamp"]
+            if ts < glances_start_time:
+                continue
+            elif ts > glances_end_time:
+                break
+
+            d = {
+                "timestamp": ts,
+                "gpu_power": l["power"],
+                "gpu_mem": l["memory"],
+                "gpu_mem_plot": l["memory"] / 1024,
+                "gpu_usage": l["utilization"],
+                "gpu_temp": l["temperature"],
+            }
+            
+            data.append(d)
+
+        df = pd.DataFrame(data)
         df["timestamp_plot"] = (df["timestamp"] - glances_start_time) / SEC_TO_NANOSEC
         self.power_df = df
 
@@ -304,7 +329,7 @@ Write your short description here:
             else:
                 root_id = t["span_id"]
         
-        id_to_level = {t["span_id"]: None for t in self.agent_trace}
+        id_to_level = {t["span_id"]: -1 for t in self.agent_trace}
         id_to_level[root_id] = 0
         queue = deque([root_id])
         while len(queue) > 0:
@@ -318,7 +343,7 @@ Write your short description here:
 
         id_to_trace = {t["span_id"]: t for t in self.agent_trace}
         
-        prefix = None
+        prefix = []
         base_prefill_tps = None
         cur_model = None
         start_time = self.glances_df["timestamp"].iloc[0]
@@ -461,6 +486,7 @@ Write your short description here:
 
     def get_topmost_spans(self):
         spans = self.processed_agent_trace
+        assert spans is not None
         top_spans = []
         i = 0
         while i < len(spans):
@@ -526,6 +552,7 @@ Write your short description here:
     def plot_trace_execution_timeline_full(self, ax):
         # Color
         agent_trace = self.processed_agent_trace
+        assert agent_trace is not None
         stage_names = list({t["name"] for t in agent_trace})
         palette = sns.color_palette("Set2", len(stage_names))
         stage_names_ordered = [
@@ -817,7 +844,7 @@ Write your short description here:
         if self.device_type == DeviceType.JETSON:
             return self.plot_metrics(
                 "gpu",
-                title="GPU Utilization and Frequency Over Time",
+                title="GPU Utilization Over Time",
                 y_axis_label="GPU Utilization (%)",
                 metrics=[("gpu_usage", "GPU Utilization (%)")],
                 power=True,
@@ -826,10 +853,12 @@ Write your short description here:
         self.plot_metrics(
             "gpu",
             title="GPU Memory and Utilization Over Time",
-            y_axis_label="GPU Memory (GB)",
-            metrics=[("gpu_mem_plot", "GPU Memory (GB)")],
+            y_axis_label="GPU Memory (GiB)",
+            metrics=[("gpu_mem_plot", "GPU Memory (GiB)")],
+            power=self.device_type==DeviceType.LINUX_VM,
             second_y_axis_label="GPU Utilization (%)",
             second_metrics=[("gpu_usage", "GPU Utilization (%)", {"color": "green", "linestyle": "-."})],
+            second_metrics_power=self.device_type==DeviceType.LINUX_VM,
         )
 
     def plot_cpu_metrics(self):
@@ -844,10 +873,10 @@ Write your short description here:
         )
 
     def plot_cpu_and_gpu_metrics(self):
-        if self.device_type == DeviceType.JETSON:
+        if self.device_type == DeviceType.JETSON or self.device_type == DeviceType.LINUX_VM:
             return self.plot_metrics(
                 "cpu_and_gpu",
-                title="CPU and GPU Utilization and Frequency Over Time",
+                title="CPU and GPU Utilization Over Time",
                 y_axis_label="CPU Utilization (%)",
                 metrics=[("processes_cpu_pct", "CPU Utilization (%)")],
                 second_y_axis_label="GPU Utilization (MHz)",
@@ -860,9 +889,10 @@ Write your short description here:
             title="CPU Process and GPU Memory Usage Over Time",
             y_axis_label="CPU Process (%)",
             metrics=[("processes_cpu_pct", "Process")],
-            second_y_axis_label="GPU Memory (GB)",
+            second_y_axis_label="GPU Memory (GiB)",
             second_subplot=True,
-            second_metrics=[("gpu_mem_plot", "GPU Memory (GB)", {"color": "green"})],
+            second_metrics=[("gpu_mem_plot", "GPU Memory (GiB)", {"color": "green"})],
+            second_metrics_power=self.device_type==DeviceType.LINUX_VM,
         )
 
     def plot_mem_metrics(self):
@@ -920,12 +950,17 @@ Write your short description here:
                 ("battery_temp", "Battery Temperature"),
             ]
         elif self.device_type == DeviceType.JETSON:
+            assert self.power_df is not None
             return [
                 (c, c[5:]) for c in self.power_df.columns.to_list() if (
                     c.startswith("temp_") and
                     c[5:].lower() in ["cpu", "gpu", "tboard", "tdiode"]
                 )
             ]
+        elif self.device_type == DeviceType.LINUX_VM:
+            return [("gpu_temp", "GPU Temperature")]
+        else:
+            raise Exception("Invalid device type")
 
     def plot_temp_metrics(self):
         self.plot_metrics(
@@ -933,16 +968,18 @@ Write your short description here:
             title="Temperature Over Time",
             y_axis_label="Celcius",
             metrics=self.get_temperature_metrics(),
-            power=self.device_type == DeviceType.JETSON,
+            power=self.device_type in [DeviceType.JETSON, DeviceType.LINUX_VM],
         )
 
     def plot_temp_and_fan_metrics(self):
+        if self.device_type == DeviceType.LINUX_VM:
+            return
         self.plot_metrics(
             "temp_and_fan",
             title="Temperature and Fan Speed Over Time",
             y_axis_label="Celcius",
             metrics=self.get_temperature_metrics(),
-            power=self.device_type == DeviceType.JETSON,
+            power=self.device_type==DeviceType.JETSON,
             second_y_axis_label="RPM",
             second_metrics=[
                 ("fan_max_speed", "Fan Speed (max)", {"color": "brown", "linestyle": "--"}),
@@ -967,9 +1004,14 @@ Write your short description here:
                 ("gpu_power", "GPU Power"),
             ]
         elif self.device_type == DeviceType.JETSON:
+            assert self.power_df is not None
             return [
                 (c, c[6:]) for c in self.power_df.columns.to_list() if c.startswith("power_")
             ]
+        elif self.device_type == DeviceType.LINUX_VM:
+            return [("gpu_power", "GPU Power")]
+        else:
+            raise Exception("Invalid device type")
 
     def plot_power_metrics(self):
         self.plot_metrics(
@@ -994,7 +1036,7 @@ Write your short description here:
             power=True,
             second_y_axis_label="Temperature (Celcius)",
             second_metrics=temp_metrics,
-            second_metrics_power=self.device_type==DeviceType.JETSON,
+            second_metrics_power=self.device_type in [DeviceType.JETSON, DeviceType.LINUX_VM],
         )
 
     def plot_power_and_battery_metrics(self):
@@ -1070,7 +1112,7 @@ Write your short description here:
 
         for step in agent_trace:
             start_time, end_time = step["start_time"], step["end_time"]
-            start_end = [(start_time, end_time, None, None)]
+            start_end = [(start_time, end_time, "", None)]
             extra_data = step.get("extra_data", None)
             stat = {
                 "step_name": step["name"],
@@ -1101,7 +1143,7 @@ Write your short description here:
                 df = self.glances_df
                 ts = df["timestamp_plot"]
                 df = df[(ts >= start_time) & (ts < end_time)]
-                prefix = (f"{label}_" if label is not None else "")
+                prefix = (f"{label}_" if len(label) > 0 else "")
 
                 metrics = [
                     ("duration_sec", end_time - start_time),

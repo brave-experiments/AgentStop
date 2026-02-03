@@ -64,12 +64,12 @@ if __name__ == "__main__":
                 id_docker_compatible = instance_id.replace("__", "_1776_")
                 image_name = f"docker.io/swebench/sweb.eval.x86_64.{id_docker_compatible}:latest".lower()
                 try:
-                    docker_env = DockerEnvironment(image=image_name, cwd="/testbed")
+                    docker_env = DockerEnvironment(image=image_name, cwd="/testbed", pull_timeout=600)
                 except:
                     print(f"\n** [{time.time()}] Ran into an exception. Reclaiming Docker space and retrying...\n")
                     res = subprocess.run(["docker", "image", "prune", "-a", "--force"], check=True, capture_output=True, text=True)
                     print(res.stdout)
-                    docker_env = DockerEnvironment(image=image_name, cwd="/testbed")
+                    docker_env = DockerEnvironment(image=image_name, cwd="/testbed", pull_timeout=600)
                 print(f"\n** [{time.time()}] Docker image started.\n")
 
                 script = args.script_template.format(prompt_path=prompt_path, agent_trace_path=agent_trace_path, docker_id=docker_env.container_id)
