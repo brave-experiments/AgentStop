@@ -4,13 +4,11 @@ import pymupdf
 import pymupdf4llm
 import re
 import requests
-import torch
 
 from bs4 import BeautifulSoup
 from collections.abc import Generator
 from dataclasses import dataclass
 from fake_useragent import UserAgent
-from llmlingua import PromptCompressor
 from markdownify import markdownify
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -317,6 +315,8 @@ class TextCompressionTool(Tool):
 
         super().__init__()
         if compression_ratio < 1.0:
+            import torch
+            from llmlingua import PromptCompressor
             if device is None:
                 if torch.cuda.is_available():
                     device = "cuda"
