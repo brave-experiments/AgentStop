@@ -45,7 +45,7 @@ class BashExecutor(PythonExecutor):
         self.full_output_template = Template(full_output_template)
 
     def __call__(self, code: str) -> CodeOutput:
-        # Check if code is duplicated (Devstral tends to do this)
+        # Check if code is duplicated
         if len(code) % 2 == 0 and len(code.split("\n")) > 1:
             mid = len(code)//2
             if code[:mid].strip() == code[mid:].strip():
