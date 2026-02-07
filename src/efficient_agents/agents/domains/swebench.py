@@ -45,14 +45,6 @@ class BashExecutor(PythonExecutor):
         self.full_output_template = Template(full_output_template)
 
     def __call__(self, code: str) -> CodeOutput:
-        # Check if code is duplicated
-        if len(code) % 2 == 0 and len(code.split("\n")) > 1:
-            mid = len(code)//2
-            if code[:mid].strip() == code[mid:].strip():
-                print("Deduping bash code...")
-                code = code[:mid]
-                print(f"Deduped code:\n```\n{code}\n```")
-
         cmd = ["docker", "exec", "-i"]
         for k, v in self.env.items():
             cmd.extend(["-e", f"{k}={v}"])
