@@ -1,5 +1,5 @@
+import json
 import subprocess
-import yaml
 
 from efficient_agents.agents.base import LogProbsCascadeAgent
 from importlib import resources
@@ -45,15 +45,22 @@ class BashExecutor(PythonExecutor):
         self.full_output_template = Template(full_output_template)
 
     def __call__(self, code: str) -> CodeOutput:
+        # Check if code is duplicated (Devstral tends to do this)
+        if len(code) % 2 == 0 and len(code.split("\n")) > 1:
+            mid = len(code)//2
+            if code[:mid].strip() == code[mid:].strip():
+                print("Deduping bash code...")
+                code = code[:mid]
+                print(f"Deduped code:\n```\n{code}\n```")
+
         cmd = ["docker", "exec", "-i"]
         for k, v in self.env.items():
             cmd.extend(["-e", f"{k}={v}"])
-        cmd.extend([self.docker_id, "bash", "-l"])
+        cmd.extend([self.docker_id, "bash", "-lc", code])
 
         try:
             result = subprocess.run(
                 cmd,
-                input=code,
                 text=True,
                 timeout=self.timeout,
                 encoding="utf-8",
@@ -67,7 +74,7 @@ class BashExecutor(PythonExecutor):
                 output = self.output_template.render(output=output_obj)
             else:
                 output = self.full_output_template.render(output=output_obj)
-            return CodeOutput(output=output, logs=output, is_final_answer=is_finished)
+            return CodeOutput(output=output if is_finished else None, logs=output, is_final_answer=is_finished)
         except subprocess.TimeoutExpired as e:
             output = ""
             if e.stdout:
@@ -92,9 +99,8 @@ class SweBenchLogProbsAgent(LogProbsCascadeAgent, key="swebench_logprobs"):
 
         assert kwargs["docker_id"] is not None
         self.docker_id = kwargs["docker_id"]
-        with resources.open_text("minisweagent.config.extra", "swebench.yaml") as f:
-            config = yaml.safe_load(f)
-
+        with resources.open_text("efficient_agents.config", "mini_swe_agent.json") as f:
+            config = json.load(f)
         self.agent.python_executor = BashExecutor(self.docker_id, config)
         self.agent.prompt_templates["system_prompt"] = config["agent"]["system_template"]
         self.agent.code_block_tags = ("```bash", "```")
