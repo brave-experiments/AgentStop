@@ -45,10 +45,10 @@ class BashExecutor(PythonExecutor):
         self.full_output_template = Template(full_output_template)
 
     def __call__(self, code: str) -> CodeOutput:
-        cmd = ["docker", "exec", "-i"]
+        cmd = ["docker", "exec"]
         for k, v in self.env.items():
             cmd.extend(["-e", f"{k}={v}"])
-        cmd.extend([self.docker_id, "bash", "-lc", code])
+        cmd.extend([self.docker_id,  "timeout", "-k", str(self.timeout + 10) + "s", str(self.timeout) + "s", "bash", "-lc", code])
 
         try:
             result = subprocess.run(
