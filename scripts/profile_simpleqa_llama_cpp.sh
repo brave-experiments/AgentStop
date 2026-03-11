@@ -1,8 +1,8 @@
-MODEL_SIZE="30"
-MODEL2_SIZE="30"
+MODEL_SIZE="1.7"
+MODEL2_SIZE="1.7"
 MODEL_ID=llamacpp/qwen3-${MODEL_SIZE}b
 MODEL2_ID=llamacpp/qwen3-${MODEL2_SIZE}b
-BASE_OUTPUT_PATH="../logs/simpleqa_full_llamacpp_qwen3_${MODEL_SIZE}b"
+BASE_OUTPUT_PATH="../logs/simpleqa/llamacpp_qwen3_${MODEL_SIZE}b"
 mkdir -p ${BASE_OUTPUT_PATH}
 sudo echo "Starting profiling"
 sudo nohup python -u -m efficient_agents.profiler.profile_and_analyze_batch \

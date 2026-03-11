@@ -1,10 +1,10 @@
-MODEL_SIZE="30" # Initial model
-MODEL2_SIZE="30" # Model to cascade to. Ignore this
+MODEL_SIZE="8" # Initial model
+MODEL2_SIZE="8" # Model to cascade to. Ignore this
 THRESHOLD=0 # Setting to 0 will disable cascading
 
 MODEL_ID=llamacpp/qwen3-${MODEL_SIZE}b
 MODEL2_ID=llamacpp/qwen3-${MODEL2_SIZE}b
-BASE_OUTPUT_PATH="../logs/frames_full_llamacpp_qwen3_${MODEL_SIZE}b"
+BASE_OUTPUT_PATH="../logs/frames/llamacpp_qwen3_${MODEL_SIZE}b"
 mkdir -p ${BASE_OUTPUT_PATH}
 
 sudo echo "Starting profiling"
@@ -26,7 +26,7 @@ sudo nohup python -u -m efficient_agents.profiler.profile_and_analyze_batch \
 --question_col Prompt \
 --num_repeats 1 \
 --num_retries 1 \
---timeout 300 \
+--timeout 600 \
 --base_output_path ${BASE_OUTPUT_PATH} \
 --preload_model_id ${MODEL_ID} \
 --llm_backend LlamaCpp \

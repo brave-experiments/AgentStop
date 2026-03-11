@@ -382,21 +382,15 @@ class Profiler:
             if self.llm_backend is not None and self.preload_model_id is not None:
                 self.llm_backend.start(self.preload_model_id)
             self.start_target_script()
-
-            # Stop
-            self.stop_power_measurement()
-            self.stop_glances()
-
-            # Save
-            if self.power_output_path is not None:
-                self.save_power_measurement()
-            self.save_glances_log()
             return True
         except BaseException as e:
             print(f"Caught an Exception: {e}")
             traceback.print_exc()
             return False
         finally:
+            if self.power_output_path is not None:
+                self.save_power_measurement()
+            self.save_glances_log()
             self.cleanup()
 
 

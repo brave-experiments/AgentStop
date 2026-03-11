@@ -99,7 +99,7 @@ sudo python -m profiler.profile_and_analyze_multiple \\
                         model_id=None,
                         full_execution=False,
                         output_dir=analysis_output_path,
-                        output_ext=["png", "pdf"],
+                        output_ext=["pdf"],
                         display_plots=False,
                         display_summary=False,
                     ).analyze()

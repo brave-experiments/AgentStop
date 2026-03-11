@@ -765,8 +765,8 @@ Write your short description here:
         
         ax.set_ylabel(y_axis_label)
         ax.tick_params(axis="y")
-        ax.set_title(title)
-        ax.grid(True, alpha=0.3, axis="y")
+        # ax.set_title(title)
+        ax.grid(True, axis="y", linestyle="--", linewidth=0.8, alpha=0.6)
         
         # Plot second y
         if second_metrics is not None:
@@ -794,8 +794,8 @@ Write your short description here:
                 if len(second_metrics) > 1:
                     ax_second.legend(loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=len(second_metrics), frameon=False)            
             else:
-                ax.legend(loc="upper left", bbox_to_anchor=(0.0, 0.0), ncol=len(metrics), frameon=False, columnspacing=0.8)
-                ax_second.legend(loc="upper right", bbox_to_anchor=(1.0, 0.0), ncol=len(second_metrics), frameon=False, columnspacing=0.8)
+                ax.legend(loc="upper left", bbox_to_anchor=(0.0, 1.075), ncol=len(metrics), frameon=False, columnspacing=0.8)
+                ax_second.legend(loc="upper right", bbox_to_anchor=(1.0, 1.075), ncol=len(second_metrics), frameon=False, columnspacing=0.8)
         elif len(metrics) > 1:
             ax.legend(loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=len(metrics), frameon=False)
 
@@ -805,7 +805,7 @@ Write your short description here:
         else:
             other_axes=[ax] if (second_metrics is None or not second_subplot) else [ax, ax_second]
             self.plot_trace_execution_timeline_summarized(ax_stage, other_axes)
-        ax_stage.set_xlabel("Time Elapsed (sec)")
+        ax_stage.set_xlabel("Time Elapsed (seconds)")
 
         # Draw input and output boxes
         if self.include_extra_info and isinstance(self.agent_task, str):
@@ -834,7 +834,7 @@ Write your short description here:
             if ext == "png":
                 plt.savefig(f"{self.output_dir}/{save_name}.{ext}", dpi=300)
             else:
-                plt.savefig(f"{self.output_dir}/{save_name}.{ext}")
+                plt.savefig(f"{self.output_dir}/{save_name}.{ext}", bbox_inches="tight", pad_inches=0.0)
         
         if self.display_plots:
             plt.show()
@@ -1031,7 +1031,7 @@ Write your short description here:
         self.plot_metrics(
             "power_and_temp",
             title="Power and Temperature Over Time",
-            y_axis_label="mW",
+            y_axis_label="Power (mW)",
             metrics=self.get_power_metrics(),
             power=True,
             second_y_axis_label="Temperature (Celcius)",

@@ -105,7 +105,7 @@ if __name__ == "__main__":
                         model_id=None,
                         full_execution=False,
                         output_dir=analysis_output_path,
-                        output_ext=["png", "pdf"],
+                        output_ext=["pdf"],
                         display_plots=False,
                         display_summary=False,
                         include_extra_info=False,
