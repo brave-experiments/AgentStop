@@ -17,6 +17,7 @@ import threading
 import tempfile
 import time
 import traceback
+import zstandard as zstd
 
 from datetime import datetime, timezone
 from efficient_agents.agents.llm_backend import LlmBackend
@@ -284,10 +285,14 @@ class Profiler:
     def save_jsonl(self, lines, path_name):
         path = Path(path_name)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as f:
-            for item in lines:
-                f.write(json.dumps(item) + "\n")
-        setattr(self, path_name, None)
+        data = "\n".join([json.dumps(line) for line in lines]) + "\n"
+        if path_name.endswith(".jsonl"):
+            with path.open("w", encoding="utf-8") as f:
+                f.write(data)
+        elif path_name.endswith(".zst"):
+            compressed = zstd.ZstdCompressor(level=1).compress(data.encode("utf-8"))
+            with path.open("wb") as f:
+                f.write(compressed)
 
     def save_glances_log(self):
         """Filter the glances log for processes created by the target script and time period"""

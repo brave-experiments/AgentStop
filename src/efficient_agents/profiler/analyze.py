@@ -10,6 +10,7 @@ import numpy as np
 import ollama
 import pandas as pd
 import seaborn as sns
+import zstandard as zstd
 
 from openinference.semconv.trace import (
     OpenInferenceSpanKindValues,
@@ -71,6 +72,31 @@ def energy(ts, power_data, ts_is_elapsed=False):
             res.append((f"energy_{label}_mWh_per_token", e / token_count))
     return res
 
+def load_jsonl(path):
+    if path.endswith("zst"):
+        dctx = zstd.ZstdDecompressor()
+        with Path(path).open("rb") as f:
+            compressed = f.read()
+        data = dctx.decompress(compressed).decode("utf-8")
+    else:
+        with Path(path).open("r", encoding="utf-8") as f:
+            data = f.read()
+
+    return [json.loads(l) for l in data.split("\n") if l.strip()]
+
+def load_json(path):
+    if path.endswith("zst"):
+        dctx = zstd.ZstdDecompressor()
+        with Path(path).open("rb") as f:
+            compressed = f.read()
+        data = dctx.decompress(compressed).decode("utf-8")
+        data = json.loads(data)
+    else:
+        with Path(path).open("r", encoding="utf-8") as f:
+            data = json.load(f)
+
+    return data
+
 class DeviceType:
     APPLE_LAPTOP = "apple_laptop"
     JETSON = "jetson"
@@ -94,15 +120,12 @@ class Analyzer:
     ):
         assert device_type in DeviceType.ALL
         self.device_type = device_type
-        with Path(glances_log_path).open("r", encoding="utf-8") as f:
-            self.glances_log = [json.loads(l) for l in f if l.strip()]
-        with Path(agent_trace_path).open("r", encoding="utf-8") as f:
-            self.agent_trace = sorted(json.load(f), key=lambda t: t["start_time"])
+        self.glances_log = load_jsonl(glances_log_path)
+        self.agent_trace = sorted(load_json(agent_trace_path), key=lambda t: t["start_time"])
         
         self.power_df = None
         if power_log_path is not None:
-            with Path(power_log_path).open("r", encoding="utf-8") as f:
-                self.power_log = [json.loads(l) for l in f if l.strip()]
+            self.power_log = load_jsonl(power_log_path)
         
         if model_id is not None: # Make sure model_id is correct
             ollama.show(model=model_id)

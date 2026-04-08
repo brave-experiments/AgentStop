@@ -1,12 +1,42 @@
 import argparse
+import os
 import pandas as pd
 import time
 import traceback
+import zstandard as zstd
 
 from efficient_agents.agents.llm_backend import LlmBackend
 from efficient_agents.profiler.profile import Profiler
 from efficient_agents.profiler.analyze import Analyzer, DeviceType
 from pathlib import Path
+
+def compress_file_to_zst(path: str) -> str:
+    """
+    Compress a file using zstd (level=1), save as <path>.zst,
+    and remove the original file if successful.
+
+    Returns the output file path.
+    """
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"File does not exist: {path}")
+
+    output_path = path + ".zst"
+    cctx = zstd.ZstdCompressor(level=1)
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+        cctx = zstd.ZstdCompressor(level=1)
+        compressed = cctx.compress(text.encode("utf-8"))
+        with open(output_path, "wb") as f:
+            f.write(compressed)
+        os.remove(path)
+    except Exception:
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        raise
+
+    return output_path
 
 if __name__ == "__main__":
     example_text = """
@@ -58,9 +88,9 @@ sudo python -m profiler.profile_and_analyze_multiple \\
         print(f"** Run {run_idx + 1}/{args.num_repeats} **")
         for idx, prob in enumerate(problems):
             base_path = f"{args.base_output_path}/{idx}/run_{run_idx}"
-            glances_log_path = f"{base_path}/raw/glances.jsonl"
+            glances_log_path = f"{base_path}/raw/glances.jsonl.zst"
             agent_trace_path = f"{base_path}/raw/trace.json"
-            power_log_path = f"{base_path}/raw/power.jsonl"
+            power_log_path = f"{base_path}/raw/power.jsonl.zst"
             analysis_output_path = f"{base_path}/analysis"
 
             Path(f"{base_path}/raw").mkdir(parents=True, exist_ok=True)
@@ -87,24 +117,27 @@ sudo python -m profiler.profile_and_analyze_multiple \\
                 if not success:
                     retry_count += 1
 
-            if success:
-                print(f"** [{time.time()}] Profiling finished. **")
-                try:
-                    print(f"\n** Producing analytics... **\n")
-                    Analyzer(
-                        args.device_type,
-                        glances_log_path,
-                        agent_trace_path,
-                        power_log_path=power_log_path,
-                        model_id=None,
-                        full_execution=False,
-                        output_dir=analysis_output_path,
-                        output_ext=["pdf"],
-                        display_plots=False,
-                        display_summary=False,
-                    ).analyze()
-                except Exception as e:
-                    print(f"Analytics encountered an exception: {e}")
-                    traceback.print_exc()
-            else:
+            if not success:
                 print(f"** [{time.time()}] Profiling failed. **")
+                continue
+
+            print(f"** [{time.time()}] Profiling finished. **")
+            agent_trace_path = compress_file_to_zst(agent_trace_path)
+
+            try:
+                print(f"\n** Producing analytics... **\n")
+                Analyzer(
+                    args.device_type,
+                    glances_log_path,
+                    agent_trace_path,
+                    power_log_path=power_log_path,
+                    model_id=None,
+                    full_execution=False,
+                    output_dir=analysis_output_path,
+                    output_ext=["pdf"],
+                    display_plots=False,
+                    display_summary=False,
+                ).analyze()
+            except Exception as e:
+                print(f"Analytics encountered an exception: {e}")
+                traceback.print_exc()
