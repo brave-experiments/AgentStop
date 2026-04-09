@@ -1,7 +1,6 @@
 """
 Use tegrastats via jtop to capture performance metrics from Nvidia Jetson devices.
 tegrastats is much faster than using jtop directly, but it has a bit less information.
-To access power info, run with sudo.
 """
 
 import argparse
@@ -9,7 +8,6 @@ import json
 import time
 import traceback
 import signal
-import sys
 from threading import Event
 
 from jtop.core.tegrastats import Tegrastats

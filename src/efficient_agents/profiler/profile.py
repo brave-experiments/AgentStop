@@ -161,10 +161,12 @@ class Profiler:
         )
 
     def start_tegrastats(self):
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            self.power_tmp_file = tmp.name
         args = [
             "python",
-            "-m", "profiler.jetson",
-            "--output_path", self.power_output_path,
+            "-m", "efficient_agents.profiler.jetson",
+            "--output_path", self.power_tmp_file,
             "--interval", str(self.interval),
         ]
         self.power_process = subprocess.Popen(
@@ -174,7 +176,7 @@ class Profiler:
         )
         time.sleep(3)
         print(
-            f"Started tegrastats logging to {self.power_output_path} (PID = {self.power_process.pid})"
+            f"Started tegrastats logging to {self.power_tmp_file} (PID = {self.power_process.pid})"
         )
 
     def start_nvidia_smi(self):
@@ -325,7 +327,9 @@ class Profiler:
         if os_name == "Darwin":
             self.save_powermetrics()
         elif os_name == "Linux":
-            if "tegra" not in platform.release():
+            if "tegra" in platform.release():
+                self.save_tegrastats()
+            else:
                 self.save_nvidia_smi()
         else:
             raise NotImplementedError("Power measurement is not supported on your device.")
@@ -342,6 +346,14 @@ class Profiler:
             log["timestamp"] = int(fixed_ts * SEC_TO_NANOSEC)
         self.save_jsonl(logs, self.power_output_path)
         print(f"Powermetrics log saved")
+
+    def save_tegrastats(self):
+        assert self.power_tmp_file is not None
+        with open(self.power_tmp_file, "r") as f:
+            data = f.read()
+        logs = [json.loads(line.strip()) for line in data.split("\n") if line.strip()]
+        self.save_jsonl(logs, self.power_output_path)
+        print(f"Tegrastats log saved")
 
     def save_nvidia_smi(self):
         assert self.power_tmp_file is not None
