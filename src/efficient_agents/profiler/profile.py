@@ -138,6 +138,21 @@ class Profiler:
             raise NotImplementedError("Power measurement is not supported on your device.")
 
     def start_powermetrics(self):
+        try:
+            subprocess.run(
+                ["pkill", "powermetrics"],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            print("Successfully terminated existing powermetrics processes.")
+        except subprocess.CalledProcessError as e:
+            if e.returncode == 1:
+                print("No powermetrics processes found.")
+            else:
+                print(f"Error running pkill: {e}")
+                print("stderr:", e.stderr)
+
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             self.power_tmp_file = tmp.name
 
@@ -399,15 +414,15 @@ class Profiler:
             if self.llm_backend is not None and self.preload_model_id is not None:
                 self.llm_backend.start(self.preload_model_id)
             self.start_target_script()
+            if self.power_output_path is not None:
+                self.save_power_measurement()
+            self.save_glances_log()
             return True
         except BaseException as e:
             print(f"Caught an Exception: {e}")
             traceback.print_exc()
             return False
         finally:
-            if self.power_output_path is not None:
-                self.save_power_measurement()
-            self.save_glances_log()
             self.cleanup()
 
 

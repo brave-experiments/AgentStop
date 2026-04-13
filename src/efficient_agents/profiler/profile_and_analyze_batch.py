@@ -103,7 +103,7 @@ sudo python -m profiler.profile_and_analyze_multiple \\
             success = False
             while not success and retry_count <= num_retries:
                 print(f"\n** [{time.time()}] Profiling started (attempt {retry_count}/{num_retries}) for script:\n{script}\n")
-                success = Profiler(
+                profiler = Profiler(
                     script,
                     ".*python.*",
                     glances_log_path,
@@ -113,7 +113,13 @@ sudo python -m profiler.profile_and_analyze_multiple \\
                     capture_stdout=True,
                     llm_backend=args.llm_backend,
                     preload_model_id=args.preload_model_id,
-                ).start_profiling()
+                )
+                try:
+                    success = profiler.start_profiling()
+                except BaseException as e:
+                    print("Caught an exception:", e)
+                    profiler.cleanup()
+                    success = False
                 if not success:
                     retry_count += 1
 
