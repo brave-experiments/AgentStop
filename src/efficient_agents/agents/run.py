@@ -36,6 +36,7 @@ def get_custom_arg_parser(description, example_text):
     )
     parser.add_argument("--planning_interval", type=int, default=None, help="Planning interval.")
     parser.add_argument("--max_steps", type=int, default=10, help="Maximum number of steps for the agent.")
+    parser.add_argument("--max_tokens", type=int, default=512, help="Max output tokens per step")
     parser.add_argument("--fixed_cascade_step", type=int, default=None, help="Fixed step number to cascade if using fixed cascade agent.")
     parser.add_argument("--logprobs_threshold", type=float, default=None, help="Logprobs threshold to cascade if using logprobs-based cascade agent.")
     parser.add_argument("--api_base", type=str, default=None, help="API base for LiteLLM.")
@@ -112,6 +113,7 @@ python -m efficient_agents.agents.run \\
         top_p=args.top_p,
         top_k=args.top_k,
         min_p=args.min_p,
+        max_tokens=args.max_tokens,
         cascade_step=args.fixed_cascade_step,
         logprobs_threshold=args.logprobs_threshold,
         llm_backend=args.llm_backend,

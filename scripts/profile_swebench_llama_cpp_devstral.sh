@@ -20,6 +20,7 @@ sudo nohup python -u -m efficient_agents.profiler.profile_and_analyze_swebench \
     --temperature 0.15 \
     --min_p 0.01 \
     --max_steps 100 \
+    --max_tokens 4096 \
     --logprobs_threshold ${THRESHOLD} \
     --stream \
     --trace_path {agent_trace_path}" \

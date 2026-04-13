@@ -1,10 +1,10 @@
-MODEL_SIZE="30" # Initial model
-MODEL2_SIZE="30" # Model to cascade to. Ignore this
+MODEL_SIZE="35" # Initial model
+MODEL2_SIZE="35" # Model to cascade to. Ignore this
 THRESHOLD=0 # Setting to 0 will disable cascading
 
-MODEL_ID=llamacpp/qwen3-${MODEL_SIZE}b
-MODEL2_ID=llamacpp/qwen3-${MODEL2_SIZE}b
-BASE_OUTPUT_PATH="../logs/frames/llamacpp_qwen3_${MODEL_SIZE}b"
+MODEL_ID=llamacpp/qwen3.5-${MODEL_SIZE}b
+MODEL2_ID=llamacpp/qwen3.5-${MODEL2_SIZE}b
+BASE_OUTPUT_PATH="../logs/frames/llamacpp_qwen3.5_${MODEL_SIZE}b"
 mkdir -p ${BASE_OUTPUT_PATH}
 
 sudo nvpmodel -m 0
@@ -24,6 +24,7 @@ nohup python -u -m efficient_agents.profiler.profile_and_analyze_batch \
     --top_p 0.8 \
     --min_p 0.0 \
     --top_k 20 \
+    --max_tokens 2048 \
     --logprobs_threshold ${THRESHOLD} \
     --stream \
     --trace_path {agent_trace_path}" \

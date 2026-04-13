@@ -87,7 +87,7 @@ class BashExecutor(PythonExecutor):
 
 class SweBenchLogProbsAgent(LogProbsCascadeAgent, key="swebench_logprobs"):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, max_tokens=4096, **kwargs)
+        super().__init__(*args, **kwargs)
 
         assert kwargs["docker_id"] is not None
         self.docker_id = kwargs["docker_id"]

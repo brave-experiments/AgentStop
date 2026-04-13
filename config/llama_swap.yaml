@@ -11,7 +11,7 @@ startPort: 10001
 
 # macros: sets a dictionary of string:string pairs
 macros:
-  "llamacpp_path": /Users/minoskt/llama.cpp/models # Update this
+  "llamacpp_path": /home/jetson/llama.cpp/models # Update this
   "latest-llama": >
     llama-server --port ${PORT} --ctx-size 40960 --batch-size 512 --n-gpu-layers -1 --threads 8 --flash-attn on
   "latest-llama-80k": >
@@ -43,6 +43,9 @@ models:
   "llamacpp/glm-4.7-flash":
     cmd: >
       ${latest-llama} --model ${llamacpp_path}/unsloth/GLM-4.7-Flash-GGUF/GLM-4.7-Flash-UD-Q4_K_XL.gguf --chat-template-file ${llamacpp_path}/unsloth/GLM-4.7-Flash-GGUF/no_thinking.jinja --temp 0.7 --top_p 1.0 --min_p 0.01
+  "llamacpp/qwen3.5-35b":
+    cmd: >
+      ${latest-llama} --model ${llamacpp_path}/unsloth/Qwen3.5-35B-A3B-GGUF/Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf --chat-template-kwargs '{ "enable_thinking": false }' --temp 0.7 --top_p 0.8 --top-k 20 --min-p 0.00
   "llamacpp/qwen3-coder-30b":
     cmd: ${latest-llama-80k} --model ${llamacpp_path}/qwen3-coder-30b.gguf
   "llamacpp/devstral-small-2":

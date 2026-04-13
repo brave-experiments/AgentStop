@@ -61,7 +61,7 @@ class BaseAgent:
         self.planning_interval = planning_interval
         self.should_add_no_think = (
             self.model_type == "litellm"
-            and "qwen3" in self.model_id
+            and "qwen3-" in self.model_id
             and "instruct" not in self.model_id.lower()
             and "coder" not in self.model_id
             and not self.thinking
