@@ -46,8 +46,12 @@ class WebCodeLogProbsIntrinsicExitAgent(WebCodeLogProbsAgent, key="web_logprobs_
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         with resources.open_text("efficient_agents.config", "intrinsic_exit_system_prompt.txt") as f:
-            intrinsic_exit_prompt = f.read()
-        self.agent.prompt_templates["system_prompt"] = intrinsic_exit_prompt
+            custom_system_prompt = f.read()
+        self.agent.prompt_templates["system_prompt"] = custom_system_prompt
 
-    def get_tools(self):
-        return create_web_tools(self.should_add_no_think, self.compression_ratio)
+class WebCodeLogProbsBeConciseAgent(WebCodeLogProbsAgent, key="web_logprobs_be_concise"):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        with resources.open_text("efficient_agents.config", "be_concise_system_prompt.txt") as f:
+            custom_system_prompt = f.read()
+        self.agent.prompt_templates["system_prompt"] = custom_system_prompt

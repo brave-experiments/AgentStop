@@ -11,7 +11,7 @@ startPort: 10001
 
 # macros: sets a dictionary of string:string pairs
 macros:
-  "llamacpp_path": /home/jetson/llama.cpp/models # Update this
+  "llamacpp_path": /path/to/llama.cpp/models # Update this
   "latest-llama": >
     llama-server --port ${PORT} --ctx-size 40960 --batch-size 512 --n-gpu-layers -1 --threads 8 --flash-attn on
   "latest-llama-80k": >
