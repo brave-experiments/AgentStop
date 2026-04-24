@@ -1,7 +1,7 @@
 import json
 import subprocess
 
-from efficient_agents.agents.base import LogProbsAgent
+from agentstop.agents.base import LogProbsAgent
 from importlib import resources
 from jinja2 import Template
 from smolagents.local_python_executor import CodeOutput, PythonExecutor

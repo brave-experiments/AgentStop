@@ -4,13 +4,13 @@ import time
 import types
 import yaml
 
-from efficient_agents.agents.llm_backend import LlmBackend
-from efficient_agents.agents.utils import (
+from agentstop.agents.llm_backend import LlmBackend
+from agentstop.agents.utils import (
     create_model,
     get_json_exporter,
     NO_THINK,
 )
-from efficient_agents.profiler.instrumentor import CustomSmolagentsInstrumentor
+from agentstop.profiler.instrumentor import CustomSmolagentsInstrumentor
 from rich.rule import Rule
 from rich.text import Text
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS

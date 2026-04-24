@@ -20,7 +20,7 @@ import traceback
 import zstandard as zstd
 
 from datetime import datetime, timezone
-from efficient_agents.agents.llm_backend import LlmBackend
+from agentstop.agents.llm_backend import LlmBackend
 from pathlib import Path
 
 SEC_TO_NANOSEC = 1_000_000_000

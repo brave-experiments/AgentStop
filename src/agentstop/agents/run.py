@@ -3,9 +3,9 @@ import os
 
 from dotenv import load_dotenv
 
-import efficient_agents.agents.domains  # Register all agent implementations
-from efficient_agents.agents.base import BaseAgent
-from efficient_agents.agents.llm_backend import LlmBackend
+import agentstop.agents.domains  # Register all agent implementations
+from agentstop.agents.base import BaseAgent
+from agentstop.agents.llm_backend import LlmBackend
 
 load_dotenv()
 

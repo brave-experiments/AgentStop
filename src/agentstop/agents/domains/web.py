@@ -1,5 +1,5 @@
-from efficient_agents.agents.base import BaseAgent, LogProbsAgent
-from efficient_agents.agents.utils import (
+from agentstop.agents.base import BaseAgent, LogProbsAgent
+from agentstop.agents.utils import (
     CustomApiWebSearchTool,
     CustomWikipediaSearchTool,
     CustomVisitWebpageTool,

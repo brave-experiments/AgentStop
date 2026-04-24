@@ -5,9 +5,9 @@ import time
 import traceback
 import zstandard as zstd
 
-from efficient_agents.agents.llm_backend import LlmBackend
-from efficient_agents.profiler.profile import Profiler
-from efficient_agents.profiler.analyze import Analyzer, DeviceType
+from agentstop.agents.llm_backend import LlmBackend
+from agentstop.profiler.profile import Profiler
+from agentstop.profiler.analyze import Analyzer, DeviceType
 from pathlib import Path
 
 def compress_file_to_zst(path: str) -> str:

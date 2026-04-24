@@ -4,9 +4,9 @@ import subprocess
 import time
 import traceback
 
-from efficient_agents.agents.llm_backend import LlmBackend
-from efficient_agents.profiler.profile import Profiler
-from efficient_agents.profiler.analyze import Analyzer, DeviceType
+from agentstop.agents.llm_backend import LlmBackend
+from agentstop.profiler.profile import Profiler
+from agentstop.profiler.analyze import Analyzer, DeviceType
 from minisweagent.environments.docker import DockerEnvironment
 from pathlib import Path
 
