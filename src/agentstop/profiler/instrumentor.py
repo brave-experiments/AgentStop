@@ -1,7 +1,7 @@
 
 import time
 
-from efficient_agents.agents.utils import (
+from agentstop.agents.utils import (
     agglomerate_litellm_stream_deltas,
     CustomLiteLLMModel,
 )
