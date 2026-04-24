@@ -1,7 +1,7 @@
 import json
 import subprocess
 
-from efficient_agents.agents.base import LogProbsCascadeAgent
+from efficient_agents.agents.base import LogProbsAgent
 from importlib import resources
 from jinja2 import Template
 from smolagents.local_python_executor import CodeOutput, PythonExecutor
@@ -85,7 +85,7 @@ class BashExecutor(PythonExecutor):
         pass
 
 
-class SweBenchLogProbsAgent(LogProbsCascadeAgent, key="swebench_logprobs"):
+class SweBenchLogProbsAgent(LogProbsAgent, key="swebench_logprobs"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 

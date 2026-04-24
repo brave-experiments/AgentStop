@@ -282,14 +282,16 @@ class FixedCascadeAgentWithCompression(FixedCascadeAgent, key="fixed_cascade_com
         super().__init__(*args, should_compress_context=True, **kwargs)
 
 
-class LogProbsCascadeAgent(BasicCascadeAgent, key="logprobs_cascade"):
+class LogProbsAgent(BaseAgent, key="logprobs"):
     '''
         Retrieves logprobs from LLM
     '''
-    def __init__(self, *args, logprobs_threshold=None, **kwargs):
-        assert isinstance(logprobs_threshold, float)
-        super().__init__(*args, logprobs=True, top_logprobs=5, **kwargs)
-        self.logprobs_threshold = logprobs_threshold
-    
-    def should_cascade(self, step):
-        return False
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, logprobs=True, top_logprobs=5, stream_run=True, **kwargs)
+
+    def run(self, prompt, **kwargs):
+        agent_run = self.agent.run(prompt, stream=True, **kwargs)
+        assert isinstance(agent_run, types.GeneratorType)
+        for step in agent_run:
+            continue
+        return step

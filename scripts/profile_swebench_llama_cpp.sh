@@ -1,5 +1,3 @@
-THRESHOLD=0 # Setting to 0 will disable cascading
-
 MODEL_ID=llamacpp/qwen3-coder-30b
 BASE_OUTPUT_PATH="../logs/swebench/llamacpp_qwen3_coder_30b"
 mkdir -p ${BASE_OUTPUT_PATH}
@@ -13,7 +11,7 @@ sudo nohup python -u -m efficient_agents.profiler.profile_and_analyze_swebench \
 --script_template "python -m efficient_agents.agents.run \
     --agent_type swebench_logprobs \
     --docker_id {docker_id} \
-    --model_id openai/${MODEL_ID} openai/${MODEL_ID} \
+    --model_id openai/${MODEL_ID} \
     --model_type litellm \
     --api_base http://127.0.0.1:8080/v1 \
     --prompt_path {prompt_path} \
@@ -23,7 +21,6 @@ sudo nohup python -u -m efficient_agents.profiler.profile_and_analyze_swebench \
     --top_k 20 \
     --max_steps 100 \
     --max_tokens 4096 \
-    --logprobs_threshold ${THRESHOLD} \
     --stream \
     --trace_path {agent_trace_path}" \
 --input_path "hf://datasets/SWE-bench/SWE-bench_Verified/data/test-00000-of-00001.parquet" \

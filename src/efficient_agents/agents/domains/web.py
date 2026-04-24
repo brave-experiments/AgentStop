@@ -1,4 +1,4 @@
-from efficient_agents.agents.base import BaseAgent, LogProbsCascadeAgent
+from efficient_agents.agents.base import BaseAgent, LogProbsAgent
 from efficient_agents.agents.utils import (
     CustomApiWebSearchTool,
     CustomWikipediaSearchTool,
@@ -35,7 +35,7 @@ class WebCodeAgent(BaseAgent, key="web_basic"):
     def get_tools(self):
         return create_web_tools(self.should_add_no_think, self.compression_ratio)
 
-class WebCodeLogProbsAgent(LogProbsCascadeAgent, key="web_logprobs"):
+class WebCodeLogProbsAgent(LogProbsAgent, key="web_logprobs"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
