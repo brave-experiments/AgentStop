@@ -269,9 +269,13 @@ class Analyzer:
                 "gpu_usage": l["GR3D"]["val"],
             }
 
+            total = 0
             for k, v in l["WATT"].items():
                 if k != "NC": # Skip "Not Connected"
                     d[f"power_{k}"] = v["cur"]
+                    total += v["cur"]
+
+            d["power_total"] = total
             
             for k, v in l["TEMP"].items():
                 d[f"temp_{k}"] = max(v, 0.0)
@@ -383,12 +387,14 @@ Write your short description here:
                         pass
                 
                 agent_output = attributes.get(OUTPUT_VALUE, None)
-                start_pattern = "FinalAnswerStep(output='"
+                start_pattern = "FinalAnswerStep(output="
                 if (
                     isinstance(agent_output, str) and
                     agent_output.startswith(start_pattern)
                 ):
-                    agent_output = agent_output[len(start_pattern):-2]  # Exclude the closing ')
+                    agent_output = agent_output[len(start_pattern):-1]  # Exclude the closing ')
+                    if len(agent_output) > 1 and agent_output[0] == agent_output[-1] == "'":
+                        agent_output = agent_output[1:-1]
                 
                 self.agent_task = agent_task
                 self.agent_output = agent_output
