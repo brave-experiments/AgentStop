@@ -45,13 +45,13 @@ class WebCodeLogProbsAgent(LogProbsAgent, key="web_logprobs"):
 class WebCodeLogProbsIntrinsicExitAgent(WebCodeLogProbsAgent, key="web_logprobs_intrinsic_exit"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        with resources.open_text("efficient_agents.config", "intrinsic_exit_system_prompt.txt") as f:
+        with resources.open_text("agentstop.config", "intrinsic_exit_system_prompt.txt") as f:
             custom_system_prompt = f.read()
         self.agent.prompt_templates["system_prompt"] = custom_system_prompt
 
 class WebCodeLogProbsBeConciseAgent(WebCodeLogProbsAgent, key="web_logprobs_be_concise"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        with resources.open_text("efficient_agents.config", "be_concise_system_prompt.txt") as f:
+        with resources.open_text("agentstop.config", "be_concise_system_prompt.txt") as f:
             custom_system_prompt = f.read()
         self.agent.prompt_templates["system_prompt"] = custom_system_prompt

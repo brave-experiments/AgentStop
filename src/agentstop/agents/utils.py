@@ -1,6 +1,5 @@
 import json
 import pandas as pd
-import pymupdf
 import pymupdf4llm
 import re
 import requests

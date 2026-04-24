@@ -1,4 +1,3 @@
-import ollama
 import os
 import psutil
 import re
@@ -79,7 +78,9 @@ class LlmBackend:
 
 class LlmBackendOllama(LlmBackend, key="Ollama"):
     def __init__(self):
+        import ollama
         super().__init__(process_filter=r"(o|O)llama")
+        self.ollama = ollama
 
     def _start(self, model_id):
         print("Starting Ollama...")
@@ -97,11 +98,11 @@ class LlmBackendOllama(LlmBackend, key="Ollama"):
         print("Ollama started.")
 
         print(f"Preloading model {model_id}...")
-        ollama.generate(model=model_id)
+        self.ollama.generate(model=model_id)
         print("Ollama started and preloaded.")
 
     def stop(self):
-        models = ollama.ps()
+        models = self.ollama.ps()
         for model in models.models:
             model_id = model.model
             print(f"Stopping model {model_id}...")

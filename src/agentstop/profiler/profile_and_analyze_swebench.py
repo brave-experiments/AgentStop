@@ -11,12 +11,8 @@ from minisweagent.environments.docker import DockerEnvironment
 from pathlib import Path
 
 if __name__ == "__main__":
-    example_text = """
-"""
-
     parser = argparse.ArgumentParser(
         description="Profile and analyze using a target script on multiple data inputs from a csv file",
-        epilog=example_text,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--script_template", type=str, required=True, help="Target agent script template.")

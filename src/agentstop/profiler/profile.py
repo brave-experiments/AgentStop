@@ -427,27 +427,8 @@ class Profiler:
 
 
 def main():
-    example_text = """
-Examples:
-
-sudo python -m profiler.profile \\
---script "python -m agents.web.smol_agents \\
-    --agent_type code --model_id ollama_chat/qwen3:8b --model_type litellm \\
-    --prompt 'What is the meaning of 42?' \\
-    --stream \\
-    --trace_path ../logs/smol_ollama_qwen3_8b_compressed_stream/smolagent_trace.json" \\
---glances_process_filter ".*python.*" \\
---glances_output_path ../logs/smol_ollama_qwen3_1.7b_compressed_stream/smolagent_glances.jsonl \\
---power_output_path ../logs/smol_ollama_qwen3_1.7b_compressed_stream/smolagent_powermetrics.jsonl \\
---frequency 100 \\
---capture_stdout \\
---llm_backend ollama \\
---preload_model_id ollama_chat/qwen3:8b
-"""
-
     parser = argparse.ArgumentParser(
         description="Generate a system resource profile of a target agent",
-        epilog=example_text,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--script", type=str, required=True, help="Target agent script")

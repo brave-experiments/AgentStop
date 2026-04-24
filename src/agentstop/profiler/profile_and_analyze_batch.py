@@ -39,29 +39,8 @@ def compress_file_to_zst(path: str) -> str:
     return output_path
 
 if __name__ == "__main__":
-    example_text = """
-Examples:
-
-sudo python -m profiler.profile_and_analyze_multiple \\
---script_template "python -m efficient_agents.agents.web \\
-    --agent_type fixed_cascade_compress \\
-    --model_id ollama_chat/qwen3:1.7b ollama_chat/qwen3:14b \\
-    --model_type litellm \\
-    --prompt {prompt} \\
-    --stream \\
-    --fixed_cascade_step 1 \\
-    --trace_path {agent_trace_path}" \\
---input_path ../data/frames/frames_code_1.7b_incorrect_14b_correct.csv \\
---question_col Prompt \\
---num_repeats 3 \\
---base_output_path ../logs/frames_ollama_qwen3_fixed_cascade_compress_1.7_to_14_step_1 \\
---preload_model_id ollama_chat/qwen3:1.7b \\
---device_type apple_laptop
-"""
-
     parser = argparse.ArgumentParser(
         description="Profile and analyze using a target script on multiple data inputs from a csv file",
-        epilog=example_text,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--script_template", type=str, required=True, help="Target agent script template.")

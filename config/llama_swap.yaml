@@ -11,7 +11,7 @@ startPort: 10001
 
 # macros: sets a dictionary of string:string pairs
 macros:
-  "llamacpp_path": /path/to/llama.cpp/models # Update this
+  "model_path": /path/to/models # Update this
   "latest-llama": >
     llama-server --port ${PORT} --ctx-size 40960 --batch-size 512 --n-gpu-layers -1 --threads 8 --flash-attn on
   "latest-llama-80k": >
@@ -24,32 +24,32 @@ macros:
 models:
   # keys are the model names used in API requests
   "llamacpp/qwen3-0.6b":
-    cmd: ${latest-llama} --model ${llamacpp_path}/qwen3-0.6.gguf
+    cmd: ${latest-llama} --model ${model_path}/qwen3-0.6.gguf
   "llamacpp/qwen3-1.7b":
-    cmd: ${latest-llama} --model ${llamacpp_path}/qwen3-1.7b.gguf
+    cmd: ${latest-llama} --model ${model_path}/qwen3-1.7b.gguf
   "llamacpp/qwen3-4b":
-    cmd: ${latest-llama} --model ${llamacpp_path}/qwen3-4b-instruct-2507-q4_K_M.gguf
+    cmd: ${latest-llama} --model ${model_path}/qwen3-4b-instruct-2507-q4_K_M.gguf
   "llamacpp/qwen3-8b":
-    cmd: ${latest-llama} --model ${llamacpp_path}/qwen3-8b.gguf
+    cmd: ${latest-llama} --model ${model_path}/qwen3-8b.gguf
   "llamacpp/qwen3-14b":
-    cmd: ${latest-llama} --model ${llamacpp_path}/qwen3-14b.gguf
+    cmd: ${latest-llama} --model ${model_path}/qwen3-14b.gguf
   "llamacpp/qwen3-30b":
-    cmd: ${latest-llama} --model ${llamacpp_path}/qwen3-30b-a3b-instruct-2507-q4_K_M.gguf
+    cmd: ${latest-llama} --model ${model_path}/qwen3-30b-a3b-instruct-2507-q4_K_M.gguf
   "llamacpp/qwen3-32b":
-    cmd: ${latest-llama} --model ${llamacpp_path}/qwen3-32b.gguf
+    cmd: ${latest-llama} --model ${model_path}/qwen3-32b.gguf
   "llamacpp/nemotron-3-nano":
     cmd: >
-      ${latest-llama} --model ${llamacpp_path}/unsloth/Nemotron-3-Nano-30B-A3B-GGUF/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf --jinja --chat-template-kwargs '{ "enable_thinking": false }'
+      ${latest-llama} --model ${model_path}/unsloth/Nemotron-3-Nano-30B-A3B-GGUF/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf --jinja --chat-template-kwargs '{ "enable_thinking": false }'
   "llamacpp/glm-4.7-flash":
     cmd: >
-      ${latest-llama} --model ${llamacpp_path}/unsloth/GLM-4.7-Flash-GGUF/GLM-4.7-Flash-UD-Q4_K_XL.gguf --chat-template-file ${llamacpp_path}/unsloth/GLM-4.7-Flash-GGUF/no_thinking.jinja --temp 0.7 --top_p 1.0 --min_p 0.01
+      ${latest-llama} --model ${model_path}/unsloth/GLM-4.7-Flash-GGUF/GLM-4.7-Flash-UD-Q4_K_XL.gguf --chat-template-file ${model_path}/unsloth/GLM-4.7-Flash-GGUF/no_thinking.jinja --temp 0.7 --top_p 1.0 --min_p 0.01
   "llamacpp/qwen3.5-35b":
     cmd: >
-      ${latest-llama} --model ${llamacpp_path}/unsloth/Qwen3.5-35B-A3B-GGUF/Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf --chat-template-kwargs '{ "enable_thinking": false }' --temp 0.7 --top_p 0.8 --top-k 20 --min-p 0.00
+      ${latest-llama} --model ${model_path}/unsloth/Qwen3.5-35B-A3B-GGUF/Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf --chat-template-kwargs '{ "enable_thinking": false }' --temp 0.7 --top_p 0.8 --top-k 20 --min-p 0.00
   "llamacpp/qwen3-coder-30b":
-    cmd: ${latest-llama-80k} --model ${llamacpp_path}/qwen3-coder-30b.gguf
+    cmd: ${latest-llama-80k} --model ${model_path}/qwen3-coder-30b.gguf
   "llamacpp/devstral-small-2":
-    cmd: ${latest-llama-80k} --model ${llamacpp_path}/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf --jinja
+    cmd: ${latest-llama-80k} --model ${model_path}/unsloth/Devstral-Small-2-24B-Instruct-2512-GGUF/Devstral-Small-2-24B-Instruct-2512-UD-Q4_K_XL.gguf --jinja
   "mlx/qwen3-1.7b":
     cmd: ${latest-mlx} --model mlx-community/Qwen3-1.7B-4bit
   "mlc/qwen3-1.7b":

@@ -13,7 +13,7 @@ sudo nohup python -u -m agentstop.profiler.profile_and_analyze_batch \
     --temperature 0.7 \
     --stream \
     --trace_path {agent_trace_path}" \
---input_path ../data/frames/llm_frames_results_judged.csv \
+--input_path ../experiment_data/processed/frames/llm_frames_results_judged.csv \
 --question_col Prompt \
 --num_repeats 1 \
 --num_retries 1 \

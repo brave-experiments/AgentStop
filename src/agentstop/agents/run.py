@@ -54,7 +54,7 @@ if __name__ == "__main__":
 Examples:
 
 Run with an MLX model:
-python -m efficient_agents.agents.run \\
+python -m agentstop.agents.run \\
 --agent_type web_basic \\
 --model_id mlx-community/Qwen3-32B-4bit \\
 --model_type mlx \\
@@ -62,7 +62,7 @@ python -m efficient_agents.agents.run \\
 --prompt "If the US keeps its 2024 growth rate, how many years will it take for the GDP to double?"
 
 Run with Anthropic via LiteLLM:
-python -m efficient_agents.agents.run \\
+python -m agentstop.agents.run \\
 --agent_type web_basic \\
 --model_id anthropic/claude-sonnet-4-20250514 \\
 --model_type litellm \\
@@ -71,7 +71,7 @@ python -m efficient_agents.agents.run \\
 --api_key_env ENV_FIELD_FOR_YOUR_API_KEY
 
 Run with Ollama via LiteLLM with streaming:
-python -m efficient_agents.agents.run \\
+python -m agentstop.agents.run \\
 --agent_type web_basic \\
 --model_id ollama_chat/qwen3:32b \\
 --model_type litellm \\
@@ -84,7 +84,7 @@ Run with MLC-LLM via LiteLLM
 `mlc_llm serve HF://mlc-ai/Qwen3-32B-q4f16_1-MLC \\
     --overrides "gpu_memory_utilization=1.0;prefill_chunk_size=1024"`:
 
-python -m efficient_agents.agents.run \\
+python -m agentstop.agents.run \\
 --agent_type web_basic \\
 --model_id openai/HF://mlc-ai/Qwen3-32B-q4f16_1-MLC \\
 --model_type litellm \\

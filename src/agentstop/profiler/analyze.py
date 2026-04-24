@@ -7,7 +7,6 @@ import json
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
-import ollama
 import pandas as pd
 import seaborn as sns
 import zstandard as zstd
@@ -128,6 +127,7 @@ class Analyzer:
             self.power_log = load_jsonl(power_log_path)
         
         if model_id is not None: # Make sure model_id is correct
+            import ollama
             ollama.show(model=model_id)
         self.model_id = model_id
 

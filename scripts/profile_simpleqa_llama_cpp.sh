@@ -16,7 +16,7 @@ sudo nohup python -u -m agentstop.profiler.profile_and_analyze_batch \
     --top_k 20 \
     --stream \
     --trace_path {agent_trace_path}" \
---input_path ../data/simpleqa/llm_simpleqa_results_qwen3_30b_2507_judged.csv \
+--input_path ../experiment_data/processed/simpleqa/llm_simpleqa_results_qwen3_30b_2507_judged.csv \
 --question_col problem \
 --num_repeats 1 \
 --num_retries 1 \

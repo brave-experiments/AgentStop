@@ -34,3 +34,4 @@ sudo nohup python -u -m agentstop.profiler.profile_and_analyze_swebench \
 --device_type apple_laptop \
 > ${BASE_OUTPUT_PATH}/profile.log 2>&1 &
 
+caffeinate -dimsu tail -n 100 -f ${BASE_OUTPUT_PATH}/profile.log

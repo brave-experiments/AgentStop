@@ -91,7 +91,7 @@ class SweBenchLogProbsAgent(LogProbsAgent, key="swebench_logprobs"):
 
         assert kwargs["docker_id"] is not None
         self.docker_id = kwargs["docker_id"]
-        with resources.open_text("efficient_agents.config", "mini_swe_agent.json") as f:
+        with resources.open_text("agentstop.config", "mini_swe_agent.json") as f:
             config = json.load(f)
         self.agent.python_executor = BashExecutor(self.docker_id, config)
         self.agent.prompt_templates["system_prompt"] = config["agent"]["system_template"]
