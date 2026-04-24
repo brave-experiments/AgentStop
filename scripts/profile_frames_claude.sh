@@ -3,8 +3,8 @@ BASE_OUTPUT_PATH="../logs/frames_full_${MODEL_ID}"
 mkdir -p ${BASE_OUTPUT_PATH}
 
 sudo echo "Starting profiling"
-sudo nohup python -u -m efficient_agents.profiler.profile_and_analyze_batch \
---script_template "python -m efficient_agents.agents.run \
+sudo nohup python -u -m agentstop.profiler.profile_and_analyze_batch \
+--script_template "python -m agentstop.agents.run \
     --agent_type web_logprobs \
     --model_id ${MODEL_ID} \
     --model_type litellm \

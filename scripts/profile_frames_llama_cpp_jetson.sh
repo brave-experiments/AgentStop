@@ -9,8 +9,8 @@ sudo jetson_clocks
 sudo jetson_clocks --show
 
 sudo echo "Starting profiling"
-nohup python -u -m efficient_agents.profiler.profile_and_analyze_batch \
---script_template "python -m efficient_agents.agents.run \
+nohup python -u -m agentstop.profiler.profile_and_analyze_batch \
+--script_template "python -m agentstop.agents.run \
     --agent_type web_logprobs \
     --model_id openai/${MODEL_ID} \
     --model_type litellm \

@@ -7,8 +7,8 @@ mkdir -p ${BASE_OUTPUT_PATH}
 # colima start --cpu 8 --memory 16 --disk 120
 
 sudo echo "Starting profiling"
-sudo nohup python -u -m efficient_agents.profiler.profile_and_analyze_swebench \
---script_template "python -m efficient_agents.agents.run \
+sudo nohup python -u -m agentstop.profiler.profile_and_analyze_swebench \
+--script_template "python -m agentstop.agents.run \
     --agent_type swebench_logprobs \
     --docker_id {docker_id} \
     --model_id openai/${MODEL_ID} \
