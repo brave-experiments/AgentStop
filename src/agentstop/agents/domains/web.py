@@ -1,0 +1,57 @@
+from agentstop.agents.base import BaseAgent, LogProbsAgent
+from agentstop.agents.utils import (
+    CustomApiWebSearchTool,
+    CustomWikipediaSearchTool,
+    CustomVisitWebpageTool,
+)
+from importlib import resources
+
+def create_web_tools(add_no_think, compression_ratio):
+    return [
+        CustomApiWebSearchTool(
+            compression_ratio=compression_ratio,
+            add_no_think=add_no_think,
+        ),
+        CustomWikipediaSearchTool(
+            user_agent="MyWebAgent (dpham@brave.com)",
+            language="en",
+            content_type="text",
+            extract_format="WIKI",
+            compression_ratio=compression_ratio,
+            add_no_think=add_no_think,
+            max_output_length=10000,
+        ),
+        CustomVisitWebpageTool(
+            compression_ratio=compression_ratio,
+            add_no_think=add_no_think,
+            max_output_length=10000,
+        ),
+    ]
+
+class WebCodeAgent(BaseAgent, key="web_basic"):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def get_tools(self):
+        return create_web_tools(self.should_add_no_think, self.compression_ratio)
+
+class WebCodeLogProbsAgent(LogProbsAgent, key="web_logprobs"):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def get_tools(self):
+        return create_web_tools(self.should_add_no_think, self.compression_ratio)
+
+class WebCodeLogProbsIntrinsicExitAgent(WebCodeLogProbsAgent, key="web_logprobs_intrinsic_exit"):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        with resources.open_text("agentstop.config", "intrinsic_exit_system_prompt.txt") as f:
+            custom_system_prompt = f.read()
+        self.agent.prompt_templates["system_prompt"] = custom_system_prompt
+
+class WebCodeLogProbsBeConciseAgent(WebCodeLogProbsAgent, key="web_logprobs_be_concise"):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        with resources.open_text("agentstop.config", "be_concise_system_prompt.txt") as f:
+            custom_system_prompt = f.read()
+        self.agent.prompt_templates["system_prompt"] = custom_system_prompt

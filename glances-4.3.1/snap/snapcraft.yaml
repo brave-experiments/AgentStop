@@ -1,0 +1,60 @@
+name: glances
+version: '4.3.1+build01'  # Put the current stable version+buildXX
+
+summary: Glances an Eye on your system. A top/htop alternative.
+description: |
+  Glances is a cross-platform monitoring tool which aims to present
+  a maximum of information in a minimum of space through a curses or
+  Web based interface. It can adapt dynamically the displayed information
+  depending on the user interface size.
+
+base: core24
+grade: stable  # devel
+confinement: strict
+
+apps:
+  glances:
+    command: bin/glances
+    plugs:  # https://snapcraft.io/docs/supported-interfaces
+      - network
+      - system-observe  # This one should give read access to all the system
+      - mount-observe
+      - hardware-observe
+      - log-observe
+      - network-observe
+      - physical-memory-observe
+      - upower-observe
+      - home
+      - network-bind
+      - uio
+      - raw-volume
+      - removable-media
+      - power-control
+      - process-control
+      - network-setup-observe
+    environment:
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+
+plugs:
+  home-glances-config:
+    interface: personal-files
+    read:
+      - $HOME/.config/glances/glances.conf
+  etc-glances-config:
+    interface: system-files
+    read:
+      - /etc/glances/glances.conf
+  proc-sys:
+    interface: system-observe
+
+parts:
+  glances:
+    plugin: python
+    source: https://github.com/nicolargo/glances.git
+    source-branch: master  # develop
+    python-requirements:
+      - requirements.txt
+      - webui-requirements.txt
+      - docker-requirements.txt
+

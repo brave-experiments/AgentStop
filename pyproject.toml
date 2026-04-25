@@ -1,0 +1,36 @@
+[project]
+name = "agentstop"
+version = "1.0.0"
+dependencies = [
+    "anthropic",
+    "arize-phoenix",
+    "beautifulsoup4",
+    "fake_useragent",
+    "Jinja2",
+    "markdownify",
+    "matplotlib",
+    "mini-swe-agent==1.17.5",
+    "numpy",
+    "ollama",
+    "openinference-instrumentation-smolagents==0.1.14",
+    "opentelemetry-sdk",
+    "opentelemetry-exporter-otlp",
+    "pandas",
+    "pymupdf4llm",
+    "python-dotenv",
+    "scikit-learn",
+    "scipy",
+    "seaborn",
+    "shap",
+    "smolagents[litellm,toolkit]==1.20.0",
+    "tqdm",
+    "wikipedia-api",
+    "xgboost",
+    "zstandard"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

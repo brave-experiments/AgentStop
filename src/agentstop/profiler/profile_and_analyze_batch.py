@@ -1,0 +1,128 @@
+import argparse
+import os
+import pandas as pd
+import time
+import traceback
+import zstandard as zstd
+
+from agentstop.agents.llm_backend import LlmBackend
+from agentstop.profiler.profile import Profiler
+from agentstop.profiler.analyze import Analyzer, DeviceType
+from pathlib import Path
+
+def compress_file_to_zst(path: str) -> str:
+    """
+    Compress a file using zstd (level=1), save as <path>.zst,
+    and remove the original file if successful.
+
+    Returns the output file path.
+    """
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"File does not exist: {path}")
+
+    output_path = path + ".zst"
+    cctx = zstd.ZstdCompressor(level=1)
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+        cctx = zstd.ZstdCompressor(level=1)
+        compressed = cctx.compress(text.encode("utf-8"))
+        with open(output_path, "wb") as f:
+            f.write(compressed)
+        os.remove(path)
+    except Exception:
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        raise
+
+    return output_path
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Profile and analyze using a target script on multiple data inputs from a csv file",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--script_template", type=str, required=True, help="Target agent script template.")
+    parser.add_argument("--input_path", type=str, required=True, help="Path to input.")
+    parser.add_argument("--question_col", type=str, required=True, help="Column name for the questions in the input file.")
+    parser.add_argument("--num_repeats", type=int, default=1, help="Number of repetitions.")
+    parser.add_argument("--timeout", type=int, default=None, help="Timeout (seconds) for target script. Default to no timeout.")
+    parser.add_argument("--num_retries", type=int, default=0, help="Number of retries if profiling fails. Default to 0.")
+    parser.add_argument("--base_output_path", type=str, required=True, help="Base path to store output.")
+    parser.add_argument("--preload_model_id", type=str, default=None, help="Model id for the profiler.")
+    parser.add_argument("--device_type", type=str, required=True, choices=DeviceType.ALL, help="Type of device for analysis.")
+    parser.add_argument("--llm_backend", type=str, default=None, choices=LlmBackend.subclasses.keys(), help="LLM backend.")
+    args = parser.parse_args()
+
+    df = pd.read_csv(args.input_path)
+    problems = df[args.question_col].to_list()
+    Path(args.base_output_path).mkdir(parents=True, exist_ok=True)
+    num_repeats = args.num_repeats
+    num_retries = args.num_retries
+    assert num_repeats > 0
+    assert num_retries >= 0
+
+    for run_idx in range(args.num_repeats):
+        print(f"** Run {run_idx + 1}/{args.num_repeats} **")
+        for idx, prob in enumerate(problems):
+            base_path = f"{args.base_output_path}/{idx}/run_{run_idx}"
+            glances_log_path = f"{base_path}/raw/glances.jsonl.zst"
+            agent_trace_path = f"{base_path}/raw/trace.json"
+            power_log_path = f"{base_path}/raw/power.jsonl.zst"
+            analysis_output_path = f"{base_path}/analysis"
+
+            Path(f"{base_path}/raw").mkdir(parents=True, exist_ok=True)
+            Path(f"{base_path}/analysis").mkdir(parents=True, exist_ok=True)
+
+            prob = prob.replace('"', '\\"')
+            script = args.script_template.format(prompt=f'"{prob}"', agent_trace_path=agent_trace_path)
+
+            retry_count = 0
+            success = False
+            while not success and retry_count <= num_retries:
+                print(f"\n** [{time.time()}] Profiling started (attempt {retry_count}/{num_retries}) for script:\n{script}\n")
+                profiler = Profiler(
+                    script,
+                    ".*python.*",
+                    glances_log_path,
+                    power_output_path=power_log_path,
+                    interval=100,
+                    timeout=args.timeout,
+                    capture_stdout=True,
+                    llm_backend=args.llm_backend,
+                    preload_model_id=args.preload_model_id,
+                )
+                try:
+                    success = profiler.start_profiling()
+                except BaseException as e:
+                    print("Caught an exception:", e)
+                    profiler.cleanup()
+                    success = False
+                if not success:
+                    retry_count += 1
+
+            if not success:
+                print(f"** [{time.time()}] Profiling failed. **")
+                continue
+
+            print(f"** [{time.time()}] Profiling finished. **")
+            agent_trace_path = compress_file_to_zst(agent_trace_path)
+
+            try:
+                print(f"\n** Producing analytics... **\n")
+                Analyzer(
+                    args.device_type,
+                    glances_log_path,
+                    agent_trace_path,
+                    power_log_path=power_log_path,
+                    model_id=None,
+                    full_execution=False,
+                    output_dir=analysis_output_path,
+                    output_ext=["pdf"],
+                    display_plots=False,
+                    display_summary=False,
+                ).analyze()
+            except Exception as e:
+                print(f"Analytics encountered an exception: {e}")
+                traceback.print_exc()

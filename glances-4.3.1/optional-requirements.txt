@@ -1,0 +1,39 @@
+# install with base requirements file
+-r requirements.txt
+
+batinfo; platform_system == 'Linux'
+bernhard
+cassandra-driver
+chevron
+docker>=6.1.1
+elasticsearch
+fastapi>=0.82.0
+graphitesender
+hddtemp
+influxdb>=1.0.0 # For InfluxDB < 1.8
+influxdb-client # For InfluxDB >= 1.8
+jinja2
+kafka-python
+netifaces2
+nvidia-ml-py
+orjson
+paho-mqtt
+pika
+podman
+potsdb
+prometheus_client
+pycouchdb
+pydantic
+pygal
+pymdstat
+pymongo
+pySMART.smartx
+pysnmp-lextudio<6.2.0 # Pinned witing implementation of #2874
+python-dateutil
+pyzmq
+requests
+six
+sparklines
+statsd
+uvicorn
+zeroconf

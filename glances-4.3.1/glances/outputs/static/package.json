@@ -1,0 +1,37 @@
+{
+    "private": true,
+    "dependencies": {
+        "bootstrap": "^5.3.3",
+        "favico.js": "^0.3.10",
+        "hotkeys-js": "^3.10.2",
+        "lodash": "^4.18.1",
+        "sanitize-html": "^2.10.0",
+        "vue": "^3.3.2"
+    },
+    "devDependencies": {
+        "@vue/compiler-sfc": "3.3.4",
+        "copy-webpack-plugin": "14.0.0",
+        "css-loader": "6.8.1",
+        "del": "7.1.0",
+        "eslint": "8.57.1",
+        "eslint-plugin-vue": "9.17.0",
+        "html-webpack-plugin": "5.6.6",
+        "less": "4.2.0",
+        "less-loader": "11.1.4",
+        "sass": "1.68.0",
+        "sass-loader": "13.3.2",
+        "style-loader": "3.3.3",
+        "url-loader": "4.1.1",
+        "vue-loader": "17.2.2",
+        "webpack": "5.105.4",
+        "webpack-cli": "5.1.4",
+        "webpack-dev-server": "4.15.2"
+    },
+    "scripts": {
+        "build": "webpack --progress --mode=production",
+        "start": "webpack serve --mode=development",
+        "watch": "webpack --progress --watch",
+        "lint": "eslint ./ --ext .js,.vue",
+        "clean": "rm -rf node_modules"
+    }
+}
