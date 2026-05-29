@@ -1,6 +1,12 @@
 # AgentStop
 
-This repo contains the code and data for our paper "AgentStop: Terminating Local AI Agents Early to Save Energy in Consumer Device" ([ACM CAIS '26](https://www.caisconf.org)).
+This repo contains the code and data for our paper "[AgentStop: Terminating Local AI Agents Early to Save Energy in Consumer Device](https://brave.com/research/agent-stop/)" ([ACM CAIS '26](https://www.caisconf.org)).
+
+For more information, see:
+- **Paper:** https://arxiv.org/pdf/2605.15206
+- **Blog post:** https://brave.com/blog/agentstop/
+- **Dataset:** https://zenodo.org/records/20122255
+
 
 ### Requirements
 
